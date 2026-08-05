@@ -61,10 +61,12 @@ export function useCuttingOrder() {
     updatePlan(planId, (plan) => invalidateIfCalculated({ ...plan, kerfMm }))
   }
 
-  function addItem(planId: string) {
+  function addItem(planId: string): string {
+    const newItem = createEmptyItem()
     updatePlan(planId, (plan) =>
-      invalidateIfCalculated({ ...plan, items: [...plan.items, createEmptyItem()] }),
+      invalidateIfCalculated({ ...plan, items: [...plan.items, newItem] }),
     )
+    return newItem.id
   }
 
   function updateItem(planId: string, itemId: string, partial: Partial<Omit<CuttingItem, 'id'>>) {
@@ -82,8 +84,10 @@ export function useCuttingOrder() {
     )
   }
 
-  function addPlan() {
-    setOrder((prev) => ({ ...prev, plans: [...prev.plans, createEmptyPlan()] }))
+  function addPlan(): string {
+    const newPlan = createEmptyPlan()
+    setOrder((prev) => ({ ...prev, plans: [...prev.plans, newPlan] }))
+    return newPlan.id
   }
 
   function removePlan(planId: string) {

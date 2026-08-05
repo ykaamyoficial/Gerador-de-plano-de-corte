@@ -1,11 +1,15 @@
-import { useState } from 'react'
+import { Plus } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Button } from '../components/ui/Button'
 import { CuttingPlanCard } from '../features/cutting-order/CuttingPlanCard'
-import { CuttingReport } from '../features/cutting-order/CuttingReport'
+import { CuttingReportModal } from '../features/cutting-order/CuttingReportModal'
+import { OrderHeader } from '../features/cutting-order/OrderHeader'
 import { useCuttingOrder } from '../features/cutting-order/useCuttingOrder'
+import '../styles/tokens.css'
 import '../styles/global.css'
+import '../styles/components.css'
+import '../styles/animations.css'
 import '../styles/print.css'
-
-type View = 'editor' | 'report'
 
 function App() {
   const {
@@ -23,7 +27,19 @@ function App() {
   } = useCuttingOrder()
 
   const [collapsedPlanIds, setCollapsedPlanIds] = useState<Set<string>>(() => new Set())
-  const [view, setView] = useState<View>('editor')
+  const [isReportOpen, setIsReportOpen] = useState(false)
+  const [focusPlanId, setFocusPlanId] = useState<string | null>(null)
+  const planElementsRef = useRef<Map<string, HTMLElement>>(new Map())
+
+  useEffect(() => {
+    if (!focusPlanId) return
+    const element = planElementsRef.current.get(focusPlanId)
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      element.querySelector<HTMLElement>('[data-role="material-input"]')?.focus()
+    }
+    setFocusPlanId(null)
+  }, [focusPlanId, order.plans])
 
   function toggleExpand(planId: string) {
     setCollapsedPlanIds((prev) => {
@@ -37,44 +53,30 @@ function App() {
     })
   }
 
-  const hasCalculatedPlan = order.plans.some((plan) => plan.calculationStatus === 'calculated')
-
-  if (view === 'report') {
-    return (
-      <div className="app app--report">
-        <div className="report-toolbar no-print">
-          <button type="button" className="button button--secondary" onClick={() => setView('editor')}>
-            Voltar para edição
-          </button>
-          <button type="button" className="button button--primary" onClick={() => window.print()}>
-            Imprimir / Salvar PDF
-          </button>
-        </div>
-        <CuttingReport order={order} />
-      </div>
-    )
+  function handleAddPlan() {
+    const newPlanId = addPlan()
+    setFocusPlanId(newPlanId)
   }
 
-  return (
-    <div className="app">
-      <header className="app-header">
-        <h1>Plano de Corte</h1>
-        <label className="field field--order-name">
-          <span className="field__label">Nome da ordem de corte (opcional)</span>
-          <input
-            type="text"
-            className="input"
-            placeholder="Ex.: Estrutura Torre 01"
-            value={order.name}
-            onChange={(event) => setOrderName(event.target.value)}
-          />
-        </label>
-      </header>
+  const hasCalculatedPlan = order.plans.some((plan) => plan.calculationStatus === 'calculated')
 
-      <main className="app-content">
+  return (
+    <div className="app-shell">
+      <OrderHeader
+        orderName={order.name}
+        onOrderNameChange={setOrderName}
+        canGenerateReport={hasCalculatedPlan}
+        onGenerateReport={() => setIsReportOpen(true)}
+      />
+
+      <main className="plan-list">
         {order.plans.map((plan, index) => (
           <CuttingPlanCard
             key={plan.id}
+            ref={(element) => {
+              if (element) planElementsRef.current.set(plan.id, element)
+              else planElementsRef.current.delete(plan.id)
+            }}
             plan={plan}
             planNumber={index + 1}
             isExpanded={!collapsedPlanIds.has(plan.id)}
@@ -90,21 +92,27 @@ function App() {
           />
         ))}
 
+        <button type="button" className="add-plan-card" onClick={handleAddPlan}>
+          <Plus size={20} />
+          <span>
+            <strong>Adicionar outro plano de corte</strong>
+            <small>Crie um plano separado para outro tipo de material.</small>
+          </span>
+        </button>
+
         <div className="app-actions">
-          <button type="button" className="button button--secondary" onClick={addPlan}>
-            + Adicionar outro plano de corte
-          </button>
-          <button
-            type="button"
-            className="button button--primary"
-            onClick={() => setView('report')}
+          <Button
+            variant="secondary"
             disabled={!hasCalculatedPlan}
+            onClick={() => setIsReportOpen(true)}
             title={!hasCalculatedPlan ? 'Calcule ao menos um plano para gerar o relatório.' : undefined}
           >
             Gerar relatório de corte
-          </button>
+          </Button>
         </div>
       </main>
+
+      <CuttingReportModal open={isReportOpen} order={order} onClose={() => setIsReportOpen(false)} />
     </div>
   )
 }

@@ -1,85 +1,127 @@
+import { Plus, Ruler, Trash2 } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
+import { useEffect, useRef } from 'react'
+import { Button } from '../../components/ui/Button'
+import { EmptyState } from '../../components/ui/EmptyState'
+import { IconButton } from '../../components/ui/IconButton'
+import { NumberField } from '../../components/ui/NumberField'
 import type { CuttingItem } from '../../domain/cutting/types'
 import type { ItemValidation } from '../../domain/cutting/validation'
+import { DURATION_FAST } from '../../shared/motion'
 
 interface CuttingItemsTableProps {
   items: CuttingItem[]
   itemErrors: Map<string, ItemValidation>
+  autoFocusItemId: string | null
+  onAutoFocusHandled: () => void
   onUpdateItem: (itemId: string, partial: Partial<Omit<CuttingItem, 'id'>>) => void
   onRemoveItem: (itemId: string) => void
   onAddItem: () => void
 }
 
-function parseNumberInput(raw: string): number | null {
-  if (raw.trim() === '') return null
-  const parsed = Number(raw)
-  return Number.isNaN(parsed) ? null : parsed
+interface CuttingItemRowProps {
+  item: CuttingItem
+  errors?: ItemValidation
+  autoFocus: boolean
+  onFocused: () => void
+  onUpdateItem: (partial: Partial<Omit<CuttingItem, 'id'>>) => void
+  onRemoveItem: () => void
+}
+
+function CuttingItemRow({ item, errors, autoFocus, onFocused, onUpdateItem, onRemoveItem }: CuttingItemRowProps) {
+  const lengthInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (autoFocus) {
+      lengthInputRef.current?.focus()
+      onFocused()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFocus])
+
+  return (
+    <motion.div
+      className="item-row"
+      layout
+      initial={{ opacity: 0, y: -8, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, x: 6, height: 0, marginBottom: 0 }}
+      transition={{ duration: DURATION_FAST + 0.08 }}
+    >
+      <NumberField
+        ref={lengthInputRef}
+        value={item.lengthMm}
+        onChange={(value) => onUpdateItem({ lengthMm: value })}
+        placeholder="0"
+        min={1}
+        unit="mm"
+        ariaLabel="Comprimento da peça em milímetros"
+        error={errors?.lengthError}
+      />
+      <NumberField
+        value={item.quantity}
+        onChange={(value) => onUpdateItem({ quantity: value })}
+        placeholder="0"
+        min={1}
+        ariaLabel="Quantidade"
+        error={errors?.quantityError}
+      />
+      <IconButton
+        icon={<Trash2 size={16} />}
+        label="Remover medida"
+        variant="danger"
+        onClick={onRemoveItem}
+      />
+    </motion.div>
+  )
 }
 
 export function CuttingItemsTable({
   items,
   itemErrors,
+  autoFocusItemId,
+  onAutoFocusHandled,
   onUpdateItem,
   onRemoveItem,
   onAddItem,
 }: CuttingItemsTableProps) {
   return (
     <div className="items-table">
-      <div className="items-table__header">
-        <span>Comprimento da peça (mm)</span>
-        <span>Quantidade</span>
-        <span></span>
-      </div>
+      {items.length > 0 && (
+        <div className="items-table__header">
+          <span>Comprimento da peça</span>
+          <span>Quantidade</span>
+          <span aria-hidden="true"></span>
+        </div>
+      )}
 
-      {items.map((item) => {
-        const errors = itemErrors.get(item.id)
-        return (
-          <div className="items-table__row" key={item.id}>
-            <div className="items-table__cell">
-              <input
-                type="number"
-                step={1}
-                min={1}
-                value={item.lengthMm ?? ''}
-                onChange={(event) =>
-                  onUpdateItem(item.id, { lengthMm: parseNumberInput(event.target.value) })
-                }
-                aria-label="Comprimento da peça em milímetros"
-                className={errors?.lengthError ? 'input input--error' : 'input'}
+      {items.length === 0 ? (
+        <EmptyState
+          icon={<Ruler size={20} />}
+          title="Nenhuma medida adicionada."
+          description="Adicione o primeiro comprimento que precisa cortar."
+        />
+      ) : (
+        <div className="items-table__rows">
+          <AnimatePresence initial={false}>
+            {items.map((item) => (
+              <CuttingItemRow
+                key={item.id}
+                item={item}
+                errors={itemErrors.get(item.id)}
+                autoFocus={autoFocusItemId === item.id}
+                onFocused={onAutoFocusHandled}
+                onUpdateItem={(partial) => onUpdateItem(item.id, partial)}
+                onRemoveItem={() => onRemoveItem(item.id)}
               />
-              {errors?.lengthError && <p className="field-error">{errors.lengthError}</p>}
-            </div>
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
 
-            <div className="items-table__cell">
-              <input
-                type="number"
-                step={1}
-                min={1}
-                value={item.quantity ?? ''}
-                onChange={(event) =>
-                  onUpdateItem(item.id, { quantity: parseNumberInput(event.target.value) })
-                }
-                aria-label="Quantidade"
-                className={errors?.quantityError ? 'input input--error' : 'input'}
-              />
-              {errors?.quantityError && <p className="field-error">{errors.quantityError}</p>}
-            </div>
-
-            <div className="items-table__cell items-table__cell--action">
-              <button
-                type="button"
-                className="button button--text"
-                onClick={() => onRemoveItem(item.id)}
-              >
-                Remover
-              </button>
-            </div>
-          </div>
-        )
-      })}
-
-      <button type="button" className="button button--secondary" onClick={onAddItem}>
-        + Adicionar outra medida
-      </button>
+      <Button variant="secondary" icon={<Plus size={16} />} onClick={onAddItem} className="items-table__add">
+        Adicionar medida
+      </Button>
     </div>
   )
 }

@@ -1,5 +1,16 @@
+import { Calculator, ChevronDown } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
+import { forwardRef, useState } from 'react'
+import { Alert } from '../../components/ui/Alert'
+import { Button } from '../../components/ui/Button'
+import { EmptyState } from '../../components/ui/EmptyState'
+import { Menu } from '../../components/ui/Menu'
+import { NumberField } from '../../components/ui/NumberField'
+import { StatusChip } from '../../components/ui/StatusChip'
 import type { CuttingItem, CuttingPlan } from '../../domain/cutting/types'
+import { DURATION_NORMAL, EASE_EMPHASIZED } from '../../shared/motion'
 import { validatePlan } from '../../domain/cutting/validation'
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { CuttingItemsTable } from './CuttingItemsTable'
 import { CuttingPlanResult } from './CuttingPlanResult'
 
@@ -11,17 +22,11 @@ interface CuttingPlanCardProps {
   onUpdateMaterial: (value: string) => void
   onUpdateStockLength: (value: number | null) => void
   onUpdateKerf: (value: number | null) => void
-  onAddItem: () => void
+  onAddItem: () => string
   onUpdateItem: (itemId: string, partial: Partial<Omit<CuttingItem, 'id'>>) => void
   onRemoveItem: (itemId: string) => void
   onCalculate: () => void
   onRemovePlan: () => void
-}
-
-function parseNumberInput(raw: string): number | null {
-  if (raw.trim() === '') return null
-  const parsed = Number(raw)
-  return Number.isNaN(parsed) ? null : parsed
 }
 
 function planHasData(plan: CuttingPlan): boolean {
@@ -33,126 +38,206 @@ function planHasData(plan: CuttingPlan): boolean {
   )
 }
 
-export function CuttingPlanCard({
-  plan,
-  planNumber,
-  isExpanded,
-  onToggleExpand,
-  onUpdateMaterial,
-  onUpdateStockLength,
-  onUpdateKerf,
-  onAddItem,
-  onUpdateItem,
-  onRemoveItem,
-  onCalculate,
-  onRemovePlan,
-}: CuttingPlanCardProps) {
+export const CuttingPlanCard = forwardRef<HTMLElement, CuttingPlanCardProps>(function CuttingPlanCard(
+  {
+    plan,
+    planNumber,
+    isExpanded,
+    onToggleExpand,
+    onUpdateMaterial,
+    onUpdateStockLength,
+    onUpdateKerf,
+    onAddItem,
+    onUpdateItem,
+    onRemoveItem,
+    onCalculate,
+    onRemovePlan,
+  },
+  ref,
+) {
   const validation = validatePlan(plan)
   const calculateLabel = plan.calculationStatus === 'not_calculated' ? 'Calcular plano' : 'Recalcular plano'
+  const [isCalculating, setIsCalculating] = useState(false)
+  const [confirmRemoveOpen, setConfirmRemoveOpen] = useState(false)
+  const [autoFocusItemId, setAutoFocusItemId] = useState<string | null>(null)
 
-  function handleRemovePlan() {
+  const measureCount = plan.items.filter((item) => item.lengthMm !== null || item.quantity !== null).length
+
+  function handleCalculateClick() {
+    setIsCalculating(true)
+    // defer the (synchronous, potentially slow) optimizer call by a tick so
+    // the "Calculando..." state actually paints before it runs
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        onCalculate()
+        setIsCalculating(false)
+      }, 0)
+    })
+  }
+
+  function handleRequestRemove() {
     if (planHasData(plan)) {
-      const confirmed = window.confirm('Remover este plano de corte? Os dados informados serão perdidos.')
-      if (!confirmed) return
+      setConfirmRemoveOpen(true)
+      return
     }
     onRemovePlan()
   }
 
+  function handleAddItem() {
+    const newItemId = onAddItem()
+    setAutoFocusItemId(newItemId)
+  }
+
   return (
-    <section className="plan-card">
+    <section className="card plan-card" ref={ref}>
       <header className="plan-card__header">
-        <button type="button" className="plan-card__toggle" onClick={onToggleExpand}>
-          <span className="plan-card__badge">Plano {planNumber}</span>
-          <span className="plan-card__title">{plan.materialName || 'Novo plano de corte'}</span>
-          <span className="plan-card__chevron">{isExpanded ? '▾' : '▸'}</span>
+        <button
+          type="button"
+          className="plan-card__toggle"
+          onClick={onToggleExpand}
+          aria-expanded={isExpanded}
+        >
+          <div className="plan-card__heading">
+            <span className="plan-card__badge">Plano {planNumber}</span>
+            <span className="plan-card__title">{plan.materialName || 'Novo plano de corte'}</span>
+          </div>
+          <span className="plan-card__subtitle">
+            {measureCount > 0
+              ? `${measureCount} ${measureCount === 1 ? 'medida adicionada' : 'medidas adicionadas'}`
+              : 'Nenhuma medida adicionada'}
+          </span>
         </button>
-        <button type="button" className="button button--text button--danger" onClick={handleRemovePlan}>
-          Remover plano
-        </button>
+
+        <div className="plan-card__header-actions">
+          <StatusChip status={plan.calculationStatus} />
+          <motion.button
+            type="button"
+            className="plan-card__chevron"
+            onClick={onToggleExpand}
+            animate={{ rotate: isExpanded ? 180 : 0 }}
+            transition={{ duration: DURATION_NORMAL, ease: EASE_EMPHASIZED }}
+            aria-label={isExpanded ? 'Recolher plano' : 'Expandir plano'}
+          >
+            <ChevronDown size={18} />
+          </motion.button>
+          <Menu
+            ariaLabel={`Opções do plano ${planNumber}`}
+            items={[{ label: 'Remover plano', onClick: handleRequestRemove, destructive: true }]}
+          />
+        </div>
       </header>
 
-      {isExpanded && (
-        <div className="plan-card__body">
-          <div className="field-grid">
-            <label className="field">
-              <span className="field__label">Material</span>
-              <input
-                type="text"
-                className="input"
-                placeholder='Ex.: Cantoneira 2" x 1/4"'
-                value={plan.materialName}
-                onChange={(event) => onUpdateMaterial(event.target.value)}
-              />
-            </label>
+      <AnimatePresence initial={false}>
+        {isExpanded && (
+          <motion.div
+            className="plan-card__body-wrapper"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: DURATION_NORMAL, ease: EASE_EMPHASIZED }}
+          >
+            <div className="plan-card__body">
+              <div className="plan-section">
+                <p className="plan-section__title">Dados do material</p>
+                <div className="material-grid">
+                  <div className="field">
+                    <span className="field__label">Material</span>
+                    <div className="form-control-wrapper">
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder='Ex.: Cantoneira 2" x 1/4"'
+                        value={plan.materialName}
+                        data-role="material-input"
+                        onChange={(event) => onUpdateMaterial(event.target.value)}
+                      />
+                    </div>
+                  </div>
 
-            <label className="field">
-              <span className="field__label">Comprimento da barra inteira</span>
-              <div className="field__input-with-unit">
-                <input
-                  type="number"
-                  step={1}
-                  min={1}
-                  className={validation.stockLengthError ? 'input input--error' : 'input'}
-                  value={plan.stockLengthMm ?? ''}
-                  onChange={(event) => onUpdateStockLength(parseNumberInput(event.target.value))}
-                />
-                <span className="field__unit">mm</span>
+                  <NumberField
+                    label="Comprimento da barra inteira"
+                    unit="mm"
+                    min={1}
+                    value={plan.stockLengthMm}
+                    onChange={onUpdateStockLength}
+                    error={validation.stockLengthError}
+                  />
+
+                  <NumberField
+                    label="Espessura do corte"
+                    unit="mm"
+                    min={0}
+                    value={plan.kerfMm}
+                    onChange={onUpdateKerf}
+                    error={validation.kerfError}
+                  />
+                </div>
               </div>
-              {validation.stockLengthError && <p className="field-error">{validation.stockLengthError}</p>}
-            </label>
 
-            <label className="field">
-              <span className="field__label">Espessura do corte</span>
-              <div className="field__input-with-unit">
-                <input
-                  type="number"
-                  step={1}
-                  min={0}
-                  className={validation.kerfError ? 'input input--error' : 'input'}
-                  value={plan.kerfMm ?? ''}
-                  onChange={(event) => onUpdateKerf(parseNumberInput(event.target.value))}
+              <div className="plan-section">
+                <p className="plan-section__title">Medidas para cortar</p>
+                <CuttingItemsTable
+                  items={plan.items}
+                  itemErrors={validation.itemErrors}
+                  autoFocusItemId={autoFocusItemId}
+                  onAutoFocusHandled={() => setAutoFocusItemId(null)}
+                  onUpdateItem={onUpdateItem}
+                  onRemoveItem={onRemoveItem}
+                  onAddItem={handleAddItem}
                 />
-                <span className="field__unit">mm</span>
+                {validation.planError && <Alert tone="warning">{validation.planError}</Alert>}
               </div>
-              {validation.kerfError && <p className="field-error">{validation.kerfError}</p>}
-            </label>
-          </div>
 
-          <CuttingItemsTable
-            items={plan.items}
-            itemErrors={validation.itemErrors}
-            onUpdateItem={onUpdateItem}
-            onRemoveItem={onRemoveItem}
-            onAddItem={onAddItem}
-          />
-          {validation.planError && <p className="field-error">{validation.planError}</p>}
+              <div className="plan-card__actions">
+                <Button
+                  variant="primary"
+                  onClick={handleCalculateClick}
+                  disabled={!validation.isValid || isCalculating}
+                  loading={isCalculating}
+                  loadingLabel="Calculando..."
+                >
+                  {calculateLabel}
+                </Button>
+              </div>
 
-          <div className="plan-card__actions">
-            <button
-              type="button"
-              className="button button--primary"
-              onClick={onCalculate}
-              disabled={!validation.isValid}
-            >
-              {calculateLabel}
-            </button>
-          </div>
+              {plan.calculationStatus === 'changed' && (
+                <Alert tone="warning">Os dados foram alterados. Calcule novamente este plano.</Alert>
+              )}
 
-          {plan.calculationStatus === 'changed' && (
-            <p className="plan-card__stale-notice">Os dados foram alterados. Calcule novamente este plano.</p>
-          )}
+              {plan.calculationStatus === 'error' && (
+                <Alert tone="danger">
+                  Não foi possível gerar um plano de corte válido. Revise os dados e tente novamente.
+                </Alert>
+              )}
 
-          {plan.calculationStatus === 'error' && (
-            <p className="plan-card__error-notice">
-              Não foi possível gerar um plano de corte válido. Revise os dados e tente novamente.
-            </p>
-          )}
+              {plan.calculationStatus === 'calculated' && plan.result && (
+                <CuttingPlanResult materialName={plan.materialName} result={plan.result} />
+              )}
 
-          {plan.calculationStatus === 'calculated' && plan.result && (
-            <CuttingPlanResult materialName={plan.materialName} result={plan.result} />
-          )}
-        </div>
-      )}
+              {plan.calculationStatus === 'not_calculated' && (
+                <EmptyState
+                  icon={<Calculator size={20} />}
+                  title="O plano ainda não foi calculado."
+                  description='Informe as medidas e clique em "Calcular plano".'
+                />
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <ConfirmDialog
+        open={confirmRemoveOpen}
+        title="Remover este plano?"
+        description="As medidas e o resultado deste plano serão removidos."
+        confirmLabel="Remover plano"
+        destructive
+        onConfirm={() => {
+          setConfirmRemoveOpen(false)
+          onRemovePlan()
+        }}
+        onCancel={() => setConfirmRemoveOpen(false)}
+      />
     </section>
   )
-}
+})

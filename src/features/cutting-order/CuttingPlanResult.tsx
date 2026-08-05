@@ -1,48 +1,56 @@
+import { useMemo, useState } from 'react'
+import { Button } from '../../components/ui/Button'
 import type { CuttingPlanResult as CuttingPlanResultData } from '../../domain/cutting/types'
-import { formatMm } from '../../shared/formatters/formatMm'
-import { detailedSequenceLabel, groupedSequenceLabel } from '../../shared/formatters/sequence'
-import { CuttingBarView } from './CuttingBarView'
+import { buildPieceColorMap } from '../../shared/pieceColors'
+import { CuttingBarCard } from './CuttingBarCard'
+import { PlanResultSummary } from './PlanResultSummary'
 
 interface CuttingPlanResultProps {
   materialName: string
   result: CuttingPlanResultData
 }
 
+const INITIAL_VISIBLE_BARS = 20
+const MAX_TOTAL_ANIMATION_DELAY_SECONDS = 0.5
+
 export function CuttingPlanResult({ materialName, result }: CuttingPlanResultProps) {
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_BARS)
+  const colorMap = useMemo(() => buildPieceColorMap(result.bars), [result.bars])
+  const visibleBars = result.bars.slice(0, visibleCount)
+  const remainingCount = result.bars.length - visibleBars.length
+  const delayStep = result.bars.length > 0 ? Math.min(0.04, MAX_TOTAL_ANIMATION_DELAY_SECONDS / result.bars.length) : 0
+
   return (
     <div className="plan-result">
-      <div className="plan-result__summary">
-        <h4>{materialName || 'Material sem nome'}</h4>
-        <p>
-          Barras inteiras necessárias: <strong>{result.requiredStockCount}</strong>
-        </p>
-        <p>Comprimento de cada barra: {formatMm(result.stockLengthMm)}</p>
-        <p>Total de peças: {result.totalRequestedPieces}</p>
-        {result.optimizationStatus === 'best_found' && (
-          <p className="plan-result__note">
-            Foi gerado o melhor plano encontrado dentro do tempo de cálculo.
-          </p>
-        )}
-      </div>
+      <p className="plan-result__title">{materialName || 'Material sem nome'}</p>
+
+      <PlanResultSummary
+        requiredStockCount={result.requiredStockCount}
+        stockLengthMm={result.stockLengthMm}
+        totalRequestedPieces={result.totalRequestedPieces}
+      />
+
+      {result.optimizationStatus === 'best_found' && (
+        <p className="plan-result__note">Foi gerado o melhor plano encontrado dentro do tempo de cálculo.</p>
+      )}
 
       <div className="plan-result__bars">
-        {result.bars.map((bar) => (
-          <div className="bar-card" key={bar.barNumber}>
-            <div className="bar-card__header">
-              <span className="bar-card__number">BARRA {String(bar.barNumber).padStart(2, '0')}</span>
-              <span className="bar-card__leftover">Sobra: {formatMm(bar.leftoverMm)}</span>
-            </div>
-            <CuttingBarView bar={bar} stockLengthMm={result.stockLengthMm} />
-            <p className="bar-card__sequence-label">Sequência:</p>
-            <p className="bar-card__sequence">{groupedSequenceLabel(bar.pieces)}</p>
-            <p className="bar-card__sequence-detail">{detailedSequenceLabel(bar.pieces)}</p>
-            <p className="bar-card__meta">
-              Comprimento das peças: {formatMm(bar.piecesLengthMm)} · Perda nos cortes:{' '}
-              {formatMm(bar.kerfLossMm)}
-            </p>
-          </div>
+        {visibleBars.map((bar, index) => (
+          <CuttingBarCard
+            key={bar.barNumber}
+            bar={bar}
+            stockLengthMm={result.stockLengthMm}
+            colorMap={colorMap}
+            animationDelaySeconds={index * delayStep}
+          />
         ))}
       </div>
+
+      {remainingCount > 0 && (
+        <Button variant="secondary" onClick={() => setVisibleCount((count) => count + INITIAL_VISIBLE_BARS)}>
+          Mostrar mais barras ({remainingCount} restantes)
+        </Button>
+      )}
     </div>
   )
 }

@@ -1,22 +1,32 @@
+import { motion } from 'motion/react'
 import type { CuttingBarResult } from '../../domain/cutting/types'
+import { EASE_EMPHASIZED } from '../../shared/motion'
 
 interface CuttingBarViewProps {
   bar: CuttingBarResult
   stockLengthMm: number
+  colorMap: Map<number, string>
+  delaySeconds?: number
 }
 
-const PALETTE = ['#3b6ea5', '#4f8fc0', '#6aa8d8', '#8bbfe3', '#a9d0ea', '#5a83ae']
-
-export function CuttingBarView({ bar, stockLengthMm }: CuttingBarViewProps) {
+export function CuttingBarView({ bar, stockLengthMm, colorMap, delaySeconds = 0 }: CuttingBarViewProps) {
   return (
-    <div className="bar-view" role="img" aria-label={`Representação da barra ${bar.barNumber}`}>
+    <motion.div
+      className="bar-view"
+      role="img"
+      aria-label={`Representação da barra ${bar.barNumber}`}
+      style={{ transformOrigin: 'left' }}
+      initial={{ scaleX: 0.02, opacity: 0.5 }}
+      animate={{ scaleX: 1, opacity: 1 }}
+      transition={{ duration: 0.6, delay: delaySeconds, ease: EASE_EMPHASIZED }}
+    >
       {bar.pieces.map((piece, index) => {
         const widthPercent = (piece.lengthMm / stockLengthMm) * 100
         return (
           <div
             key={index}
             className="bar-view__segment"
-            style={{ width: `${widthPercent}%`, backgroundColor: PALETTE[index % PALETTE.length] }}
+            style={{ width: `${widthPercent}%`, backgroundColor: colorMap.get(piece.lengthMm) }}
             title={`${piece.lengthMm} mm`}
           >
             {widthPercent > 6 ? piece.lengthMm : ''}
@@ -32,6 +42,6 @@ export function CuttingBarView({ bar, stockLengthMm }: CuttingBarViewProps) {
           {(bar.leftoverMm / stockLengthMm) * 100 > 8 ? 'SOBRA' : ''}
         </div>
       )}
-    </div>
+    </motion.div>
   )
 }

@@ -1,16 +1,10 @@
-.app--report {
-  max-width: 900px;
-}
-
 .report {
-  background-color: var(--color-surface);
-  padding: 32px 40px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
+  background-color: var(--background-secondary);
+  padding: 8px 4px;
 }
 
 .report__header {
-  border-bottom: 3px solid var(--color-text);
+  border-bottom: 3px solid var(--text-primary);
   padding-bottom: 16px;
   margin-bottom: 24px;
 }
@@ -23,7 +17,7 @@
 
 .report__header p {
   font-size: 15px;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
 }
 
 .report__summary {
@@ -35,12 +29,12 @@
   font-size: 16px;
   letter-spacing: 0.03em;
   margin-bottom: 12px;
-  color: var(--color-primary-dark);
+  color: var(--accent-primary);
 }
 
 .report__summary-item {
   padding: 10px 0;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .report__summary-material {
@@ -58,7 +52,7 @@
   grid-template-columns: repeat(2, 1fr);
   gap: 4px 24px;
   font-size: 14px;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   margin-bottom: 16px;
 }
 
@@ -70,12 +64,12 @@
 
 .report__table th {
   text-align: left;
-  border-bottom: 2px solid var(--color-text);
+  border-bottom: 2px solid var(--text-primary);
   padding: 8px 10px;
 }
 
 .report__table td {
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--border-soft);
   padding: 10px;
   vertical-align: top;
 }
@@ -85,7 +79,7 @@
 }
 
 .report__table-detail {
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: 12px;
   margin-top: 2px;
 }
@@ -95,17 +89,45 @@
     display: none !important;
   }
 
-  body {
-    background-color: #ffffff;
+  /* Print only the open report sheet: hide everything else in the page
+     (the editor behind the modal overlay, and the overlay chrome itself)
+     while keeping layout intact for the elements that stay visible. */
+  body * {
+    visibility: hidden;
   }
 
-  .app--report {
-    max-width: none;
+  .report-modal,
+  .report-modal * {
+    visibility: visible;
+  }
+
+  body {
+    background: #ffffff;
+  }
+
+  .modal-overlay {
+    position: static;
+    background: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
     padding: 0;
   }
 
-  .report {
-    border: none;
+  .modal-panel {
+    position: static;
+    max-height: none;
+    box-shadow: none;
+    border-radius: 0;
+  }
+
+  .report-modal {
+    position: absolute;
+    inset: 0;
+  }
+
+  .report-modal__scroll-area {
+    overflow: visible;
+    max-height: none;
     padding: 0;
   }
 
