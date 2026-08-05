@@ -112,6 +112,12 @@ button {
   margin-top: 4px;
 }
 
+/* Plan type switcher */
+
+.plan-type-switcher {
+  margin-bottom: 24px;
+}
+
 /* Order card */
 
 .order-card {

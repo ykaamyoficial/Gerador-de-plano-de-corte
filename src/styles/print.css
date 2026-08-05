@@ -140,4 +140,14 @@
     break-inside: avoid;
     page-break-inside: avoid;
   }
+
+  .sheet-layout-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border-color: #000000;
+  }
+
+  .sheet-layout-view__piece {
+    stroke: #000000;
+  }
 }
