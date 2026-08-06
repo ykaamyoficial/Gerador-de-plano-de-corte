@@ -217,8 +217,13 @@ export const SheetCuttingPlanCard = forwardRef<HTMLElement, SheetCuttingPlanCard
                 </Alert>
               )}
 
-              {plan.calculationStatus === 'calculated' && plan.result && (
-                <SheetCuttingResult materialName={plan.materialName} result={plan.result} />
+              {plan.calculationStatus === 'calculated' && plan.result && plan.sheetWidthMm && plan.sheetLengthMm && (
+                <SheetCuttingResult
+                  materialName={plan.materialName}
+                  result={plan.result}
+                  sheetWidthMm={plan.sheetWidthMm}
+                  sheetHeightMm={plan.sheetLengthMm}
+                />
               )}
 
               {plan.calculationStatus === 'not_calculated' && (

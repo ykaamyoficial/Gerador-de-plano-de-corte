@@ -1,103 +1,145 @@
-import type { CalculateSheetCutInput, SheetCuttingResult, SheetPiecePlacement } from './types'
+import type { OptimizeSheetCutInput, OptimizeSheetCutOutput, SheetPiecePlacement } from './types'
 
 export interface SheetResultValidation {
   isValid: boolean
   errors: string[]
 }
 
+function isFiniteNonNegative(value: number): boolean {
+  return Number.isFinite(value) && value >= 0
+}
+
+function piecesOverlap(a: SheetPiecePlacement, b: SheetPiecePlacement, kerfMm: number): boolean {
+  const noOverlap =
+    a.xMm + a.widthMm + kerfMm <= b.xMm ||
+    b.xMm + b.widthMm + kerfMm <= a.xMm ||
+    a.yMm + a.heightMm + kerfMm <= b.yMm ||
+    b.yMm + b.heightMm + kerfMm <= a.yMm
+  return !noOverlap
+}
+
+/** Sweep by x, only comparing pieces whose x-ranges could possibly overlap — O(n log n) in the common (valid) case instead of checking every pair. */
+function findOverlappingPair(
+  placements: readonly SheetPiecePlacement[],
+  kerfMm: number,
+): [SheetPiecePlacement, SheetPiecePlacement] | null {
+  const sorted = [...placements].sort((a, b) => a.xMm - b.xMm)
+  for (let i = 0; i < sorted.length; i++) {
+    const a = sorted[i]
+    if (!a) continue
+    for (let j = i + 1; j < sorted.length; j++) {
+      const b = sorted[j]
+      if (!b) continue
+      if (b.xMm >= a.xMm + a.widthMm + kerfMm) break
+      if (piecesOverlap(a, b, kerfMm)) return [a, b]
+    }
+  }
+  return null
+}
+
 /**
- * Independently re-checks a calculateSheetCutPlan result: every requested
- * piece is accounted for, no piece falls outside the sheet, and no two
- * pieces overlap (checked row-by-row, then row-band by row-band, which is
- * safe and fast even for sheets with thousands of small pieces since it
- * never compares every pair).
+ * Independently re-checks an optimizeSheetCut result. A result must pass
+ * this validation before it is shown to the user.
  */
-export function validateSheetCuttingResult(
-  input: CalculateSheetCutInput,
-  result: SheetCuttingResult,
+export function validateSheetCutResult(
+  input: OptimizeSheetCutInput,
+  output: OptimizeSheetCutOutput,
 ): SheetResultValidation {
   const errors: string[] = []
 
-  if (result.requiredSheetCount <= 0) {
+  if (output.requiredSheetCount <= 0) {
     errors.push('A quantidade de chapas deve ser maior que zero.')
   }
-  if (result.layouts.length !== result.requiredSheetCount) {
+  if (output.sheets.length !== output.requiredSheetCount) {
     errors.push('O número de desenhos de chapa não corresponde à quantidade de chapas necessárias.')
   }
-  if (result.totalPlacedPieces !== result.totalRequestedPieces) {
+
+  const requestedTotal = input.items.reduce((sum, item) => sum + item.quantity, 0)
+  if (output.requestedPieceCount !== requestedTotal) {
+    errors.push('A quantidade solicitada não corresponde à entrada original.')
+  }
+  if (output.placedPieceCount !== output.requestedPieceCount) {
     errors.push('A quantidade total de peças distribuídas não corresponde ao total solicitado.')
   }
 
-  for (const item of result.items) {
+  for (const item of output.items) {
     if (item.placedQuantity !== item.requestedQuantity) {
       errors.push(
-        `A medida de ${item.widthMm} × ${item.lengthMm} mm não foi totalmente atendida (${item.placedQuantity}/${item.requestedQuantity}).`,
+        `A medida de ${item.widthMm} × ${item.heightMm} mm não foi totalmente atendida (${item.placedQuantity}/${item.requestedQuantity}).`,
       )
     }
   }
 
-  const requestedTotalFromInput = input.items
-    .filter((item) => Number.isInteger(item.widthMm) && item.widthMm > 0)
-    .filter((item) => Number.isInteger(item.lengthMm) && item.lengthMm > 0)
-    .filter((item) => Number.isInteger(item.quantity) && item.quantity > 0)
-    .reduce((sum, item) => sum + item.quantity, 0)
-  if (requestedTotalFromInput !== result.totalRequestedPieces) {
-    errors.push('A quantidade total solicitada não corresponde à entrada original.')
-  }
+  const seenInstanceIds = new Set<string>()
+  let totalPlacements = 0
 
-  for (const layout of result.layouts) {
-    const rows = new Map<number, SheetPiecePlacement[]>()
+  for (const sheet of output.sheets) {
+    totalPlacements += sheet.placements.length
 
-    for (const placement of layout.placements) {
-      if (placement.xMm < 0 || placement.yMm < 0) {
-        errors.push(`A peça ${placement.index + 1} da chapa ${layout.sheetNumber} tem posição inválida.`)
+    for (const placement of sheet.placements) {
+      if (seenInstanceIds.has(placement.instanceId)) {
+        errors.push(`A peça ${placement.instanceId} aparece duplicada no resultado.`)
       }
-      if (placement.xMm + placement.placedWidthMm > result.sheetWidthMm) {
-        errors.push(`A peça ${placement.index + 1} da chapa ${layout.sheetNumber} ultrapassa a largura da chapa.`)
-      }
-      if (placement.yMm + placement.placedLengthMm > result.sheetLengthMm) {
-        errors.push(`A peça ${placement.index + 1} da chapa ${layout.sheetNumber} ultrapassa o comprimento da chapa.`)
-      }
-      const rowPlacements = rows.get(placement.rowIndex) ?? []
-      rowPlacements.push(placement)
-      rows.set(placement.rowIndex, rowPlacements)
-    }
+      seenInstanceIds.add(placement.instanceId)
 
-    for (const [rowIndex, placements] of rows) {
-      const sorted = [...placements].sort((a, b) => a.xMm - b.xMm)
-      for (let i = 0; i < sorted.length - 1; i++) {
-        const current = sorted[i]
-        const next = sorted[i + 1]
-        if (current && next && current.xMm + current.placedWidthMm > next.xMm) {
-          errors.push(`Duas peças da linha ${rowIndex} da chapa ${layout.sheetNumber} se sobrepõem.`)
+      if (!isFiniteNonNegative(placement.xMm) || !isFiniteNonNegative(placement.yMm)) {
+        errors.push(`A peça ${placement.instanceId} tem posição inválida.`)
+      }
+      if (!Number.isFinite(placement.widthMm) || placement.widthMm <= 0 || !Number.isFinite(placement.heightMm) || placement.heightMm <= 0) {
+        errors.push(`A peça ${placement.instanceId} tem dimensões inválidas.`)
+      }
+      if (placement.xMm + placement.widthMm > input.sheetWidthMm + 1e-6) {
+        errors.push(`A peça ${placement.instanceId} da chapa ${sheet.sheetNumber} ultrapassa a largura da chapa.`)
+      }
+      if (placement.yMm + placement.heightMm > input.sheetHeightMm + 1e-6) {
+        errors.push(`A peça ${placement.instanceId} da chapa ${sheet.sheetNumber} ultrapassa o comprimento da chapa.`)
+      }
+
+      const sourceItem = input.items.find((item) => item.id === placement.itemId)
+      if (!sourceItem) {
+        errors.push(`A peça ${placement.instanceId} referencia uma medida desconhecida.`)
+      } else {
+        if (placement.rotated && !sourceItem.allowRotation) {
+          errors.push(`A peça ${placement.instanceId} foi girada mesmo com a rotação desativada.`)
+        }
+        const expectedWidthMm = placement.rotated ? sourceItem.heightMm : sourceItem.widthMm
+        const expectedHeightMm = placement.rotated ? sourceItem.widthMm : sourceItem.heightMm
+        if (placement.widthMm !== expectedWidthMm || placement.heightMm !== expectedHeightMm) {
+          errors.push(`A peça ${placement.instanceId} tem dimensões incompatíveis com a orientação informada.`)
+        }
+        if (placement.originalWidthMm !== sourceItem.widthMm || placement.originalHeightMm !== sourceItem.heightMm) {
+          errors.push(`A peça ${placement.instanceId} não corresponde à medida original.`)
         }
       }
     }
 
-    const rowBands = Array.from(rows.entries())
-      .map(([rowIndex, placements]) => ({
-        rowIndex,
-        yStart: Math.min(...placements.map((p) => p.yMm)),
-        yEnd: Math.max(...placements.map((p) => p.yMm + p.placedLengthMm)),
-      }))
-      .sort((a, b) => a.yStart - b.yStart)
+    const overlap = findOverlappingPair(sheet.placements, input.kerfMm)
+    if (overlap) {
+      errors.push(
+        `As peças ${overlap[0].instanceId} e ${overlap[1].instanceId} da chapa ${sheet.sheetNumber} se sobrepõem ou não respeitam a espessura do corte.`,
+      )
+    }
 
-    for (let i = 0; i < rowBands.length - 1; i++) {
-      const current = rowBands[i]
-      const next = rowBands[i + 1]
-      if (current && next && current.yEnd > next.yStart) {
-        errors.push(`Duas linhas de peças da chapa ${layout.sheetNumber} se sobrepõem.`)
-      }
+    const expectedUsedAreaMm2 = sheet.placements.reduce((sum, p) => sum + p.widthMm * p.heightMm, 0)
+    if (Math.abs(expectedUsedAreaMm2 - sheet.usedAreaMm2) > 1e-6) {
+      errors.push(`A área utilizada da chapa ${sheet.sheetNumber} foi calculada incorretamente.`)
     }
   }
 
-  const expectedSheetAreaM2 = (result.sheetWidthMm * result.sheetLengthMm) / 1_000_000
-  if (Math.abs(expectedSheetAreaM2 - result.sheetAreaM2) > 1e-9) {
-    errors.push('A área da chapa foi calculada incorretamente.')
+  if (totalPlacements !== output.placedPieceCount) {
+    errors.push('A contagem de peças distribuídas não confere com o total informado.')
   }
 
-  const expectedPurchasedAreaM2 = expectedSheetAreaM2 * result.requiredSheetCount
-  if (Math.abs(expectedPurchasedAreaM2 - result.purchasedAreaM2) > 1e-9) {
+  const expectedTotalPieceAreaM2 = input.items.reduce(
+    (sum, item) => sum + (item.widthMm * item.heightMm * item.quantity) / 1_000_000,
+    0,
+  )
+  if (Math.abs(expectedTotalPieceAreaM2 - output.totalPieceAreaM2) > 1e-6) {
+    errors.push('A área total das peças foi calculada incorretamente.')
+  }
+
+  const expectedTotalSheetAreaM2 = (input.sheetWidthMm * input.sheetHeightMm * output.requiredSheetCount) / 1_000_000
+  if (Math.abs(expectedTotalSheetAreaM2 - output.totalSheetAreaM2) > 1e-6) {
     errors.push('A área total das chapas utilizadas foi calculada incorretamente.')
   }
 

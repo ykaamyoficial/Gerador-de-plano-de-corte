@@ -30,58 +30,82 @@ export interface SheetCuttingPlan {
   calculationStatus: CalculationStatus
 }
 
-/** One placed piece on one sheet. `rowIndex` groups pieces placed in the same shelf/row. */
-export interface SheetPiecePlacement {
-  index: number
+// ---------------------------------------------------------------------------
+// Optimizer contract (optimizeSheetCut) — pure geometry, no UI concerns.
+// ---------------------------------------------------------------------------
+
+export interface SheetCutItem {
+  id: string
+  widthMm: number
+  heightMm: number
+  quantity: number
+  allowRotation: boolean
+}
+
+export interface ExpandedSheetPiece {
+  instanceId: string
   itemId: string
   widthMm: number
-  lengthMm: number
-  placedWidthMm: number
-  placedLengthMm: number
-  rotated: boolean
-  rowIndex: number
+  heightMm: number
+  originalWidthMm: number
+  originalHeightMm: number
+  allowRotation: boolean
+}
+
+export interface FreeRectangle {
   xMm: number
   yMm: number
+  widthMm: number
+  heightMm: number
 }
 
-export interface SheetLayoutResult {
+/** One placed piece on one sheet, in real (non-kerf-inflated) coordinates. */
+export interface SheetPiecePlacement {
+  instanceId: string
+  itemId: string
+  xMm: number
+  yMm: number
+  widthMm: number
+  heightMm: number
+  originalWidthMm: number
+  originalHeightMm: number
+  rotated: boolean
+}
+
+export interface OptimizedSheetLayout {
   sheetNumber: number
   placements: SheetPiecePlacement[]
+  usedAreaMm2: number
+  utilizationPercentage: number
+  freeRectangles: FreeRectangle[]
 }
 
-/** Per requested measure (grouped by width×length), how many were requested vs. actually placed. */
+/** Per requested measure (grouped by width×height), how many were requested vs. actually placed. */
 export interface SheetItemSummary {
   itemId: string
   widthMm: number
-  lengthMm: number
+  heightMm: number
   requestedQuantity: number
   placedQuantity: number
 }
 
-export interface SheetCuttingResult {
+export interface OptimizeSheetCutInput {
   sheetWidthMm: number
-  sheetLengthMm: number
+  sheetHeightMm: number
   kerfMm: number
-  allowRotation: boolean
+  items: SheetCutItem[]
+}
+
+export interface OptimizeSheetCutOutput {
   requiredSheetCount: number
-  totalRequestedPieces: number
-  totalPlacedPieces: number
+  sheets: OptimizedSheetLayout[]
+  requestedPieceCount: number
+  placedPieceCount: number
   items: SheetItemSummary[]
-  layouts: SheetLayoutResult[]
-  sheetAreaM2: number
-  requestedAreaM2: number
-  purchasedAreaM2: number
+  totalPieceAreaM2: number
+  totalSheetAreaM2: number
   utilizationPercentage: number
 }
 
-export interface CalculateSheetCutInput {
-  sheetWidthMm: number
-  sheetLengthMm: number
-  kerfMm: number
-  allowRotation: boolean
-  items: Array<{
-    widthMm: number
-    lengthMm: number
-    quantity: number
-  }>
-}
+/** Kept as an alias so existing UI code (result display) reads naturally. */
+export type SheetCuttingResult = OptimizeSheetCutOutput

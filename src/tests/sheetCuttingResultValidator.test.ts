@@ -1,86 +1,113 @@
 import { describe, expect, it } from 'vitest'
-import { calculateSheetCutPlan } from '../domain/sheet-cutting/calculateSheetCutPlan'
-import { validateSheetCuttingResult } from '../domain/sheet-cutting/resultValidator'
-import type { CalculateSheetCutInput, SheetCuttingResult } from '../domain/sheet-cutting/types'
+import { optimizeSheetCut } from '../domain/sheet-cutting/optimizeSheetCut'
+import { validateSheetCutResult } from '../domain/sheet-cutting/resultValidator'
+import type { OptimizeSheetCutInput, OptimizeSheetCutOutput } from '../domain/sheet-cutting/types'
 
-describe('validateSheetCuttingResult', () => {
-  const input: CalculateSheetCutInput = {
+describe('validateSheetCutResult', () => {
+  const input: OptimizeSheetCutInput = {
     sheetWidthMm: 1200,
-    sheetLengthMm: 3000,
+    sheetHeightMm: 3000,
     kerfMm: 3,
-    allowRotation: true,
     items: [
-      { widthMm: 300, lengthMm: 300, quantity: 20 },
-      { widthMm: 50, lengthMm: 440, quantity: 30 },
+      { id: 'a', widthMm: 500, heightMm: 500, quantity: 10, allowRotation: true },
+      { id: 'b', widthMm: 100, heightMm: 500, quantity: 20, allowRotation: true },
     ],
   }
 
-  it('aprova um resultado real gerado pelo calculador', () => {
-    const result = calculateSheetCutPlan(input)
-    const validation = validateSheetCuttingResult(input, result)
+  it('aprova um resultado real gerado pelo otimizador', () => {
+    const result = optimizeSheetCut(input)
+    const validation = validateSheetCutResult(input, result)
     expect(validation.isValid).toBe(true)
     expect(validation.errors).toHaveLength(0)
   })
 
-  it('reprova quando falta uma peça de uma das medidas', () => {
-    const result = calculateSheetCutPlan(input)
-    const lastLayout = result.layouts[result.layouts.length - 1]
-    expect(lastLayout).toBeDefined()
+  it('reprova quando uma peça é removida do resultado', () => {
+    const result = optimizeSheetCut(input)
+    const firstSheet = result.sheets[0]
+    expect(firstSheet).toBeDefined()
 
-    const tampered: SheetCuttingResult = {
+    const tampered: OptimizeSheetCutOutput = {
       ...result,
-      totalPlacedPieces: result.totalPlacedPieces - 1,
-      layouts: [...result.layouts.slice(0, -1), { ...lastLayout!, placements: lastLayout!.placements.slice(0, -1) }],
+      placedPieceCount: result.placedPieceCount - 1,
+      sheets: [{ ...firstSheet!, placements: firstSheet!.placements.slice(0, -1) }, ...result.sheets.slice(1)],
     }
 
-    const validation = validateSheetCuttingResult(input, tampered)
+    const validation = validateSheetCutResult(input, tampered)
     expect(validation.isValid).toBe(false)
   })
 
   it('reprova quando uma peça ultrapassa os limites da chapa', () => {
-    const result = calculateSheetCutPlan(input)
-    const firstLayout = result.layouts[0]
-    const firstPlacement = firstLayout?.placements[0]
+    const result = optimizeSheetCut(input)
+    const firstSheet = result.sheets[0]
+    const firstPlacement = firstSheet?.placements[0]
     expect(firstPlacement).toBeDefined()
 
-    const tampered: SheetCuttingResult = {
+    const tampered: OptimizeSheetCutOutput = {
       ...result,
-      layouts: [
-        { ...firstLayout!, placements: [{ ...firstPlacement!, xMm: result.sheetWidthMm - 5 }, ...firstLayout!.placements.slice(1)] },
-        ...result.layouts.slice(1),
+      sheets: [
+        { ...firstSheet!, placements: [{ ...firstPlacement!, xMm: input.sheetWidthMm - 5 }, ...firstSheet!.placements.slice(1)] },
+        ...result.sheets.slice(1),
       ],
     }
 
-    const validation = validateSheetCuttingResult(input, tampered)
+    const validation = validateSheetCutResult(input, tampered)
     expect(validation.isValid).toBe(false)
   })
 
-  it('reprova quando duas peças da mesma linha se sobrepõem', () => {
-    const result = calculateSheetCutPlan(input)
-    const firstLayout = result.layouts[0]
-    const [first, second] = firstLayout?.placements ?? []
+  it('reprova quando duas peças se sobrepõem', () => {
+    const result = optimizeSheetCut(input)
+    const firstSheet = result.sheets[0]
+    const [first, second] = firstSheet?.placements ?? []
     expect(first).toBeDefined()
     expect(second).toBeDefined()
 
-    const tampered: SheetCuttingResult = {
+    const tampered: OptimizeSheetCutOutput = {
       ...result,
-      layouts: [
+      sheets: [
         {
-          ...firstLayout!,
-          placements: [first!, { ...second!, rowIndex: first!.rowIndex, xMm: first!.xMm, yMm: first!.yMm }, ...firstLayout!.placements.slice(2)],
+          ...firstSheet!,
+          placements: [first!, { ...second!, xMm: first!.xMm, yMm: first!.yMm }, ...firstSheet!.placements.slice(2)],
         },
-        ...result.layouts.slice(1),
+        ...result.sheets.slice(1),
       ],
     }
 
-    const validation = validateSheetCuttingResult(input, tampered)
+    const validation = validateSheetCutResult(input, tampered)
     expect(validation.isValid).toBe(false)
   })
 
-  it('reprova quando a área informada está incorreta', () => {
-    const result = calculateSheetCutPlan(input)
-    const tampered: SheetCuttingResult = { ...result, sheetAreaM2: result.sheetAreaM2 + 1 }
-    const validation = validateSheetCuttingResult(input, tampered)
+  it('reprova quando uma peça é girada mesmo com rotação desativada', () => {
+    const noRotationInput: OptimizeSheetCutInput = {
+      ...input,
+      items: input.items.map((item) => ({ ...item, allowRotation: false })),
+    }
+    const result = optimizeSheetCut(noRotationInput)
+    const firstSheet = result.sheets[0]
+    const firstPlacement = firstSheet?.placements[0]
+    expect(firstPlacement).toBeDefined()
+
+    const tampered: OptimizeSheetCutOutput = {
+      ...result,
+      sheets: [
+        {
+          ...firstSheet!,
+          placements: [
+            { ...firstPlacement!, rotated: true, widthMm: firstPlacement!.heightMm, heightMm: firstPlacement!.widthMm },
+            ...firstSheet!.placements.slice(1),
+          ],
+        },
+        ...result.sheets.slice(1),
+      ],
+    }
+
+    const validation = validateSheetCutResult(noRotationInput, tampered)
+    expect(validation.isValid).toBe(false)
+  })
+
+  it('reprova quando a área total das peças está incorreta', () => {
+    const result = optimizeSheetCut(input)
+    const tampered: OptimizeSheetCutOutput = { ...result, totalPieceAreaM2: result.totalPieceAreaM2 + 1 }
+    const validation = validateSheetCutResult(input, tampered)
     expect(validation.isValid).toBe(false)
   })
 })

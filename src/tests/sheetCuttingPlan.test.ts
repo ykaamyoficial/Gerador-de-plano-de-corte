@@ -1,236 +1,173 @@
 import { describe, expect, it } from 'vitest'
-import { calculateAreaM2 } from '../domain/sheet-cutting/calculations'
-import { calculateSheetCutPlan } from '../domain/sheet-cutting/calculateSheetCutPlan'
-import type { CalculateSheetCutInput } from '../domain/sheet-cutting/types'
+import { optimizeSheetCut } from '../domain/sheet-cutting/optimizeSheetCut'
+import type { OptimizeSheetCutInput } from '../domain/sheet-cutting/types'
 
-describe('calculateSheetCutPlan — single measure (matches the classic grid result)', () => {
-  it('teste 1: exemplo principal — 40 peças em 1 chapa', () => {
-    const result = calculateSheetCutPlan({
+function item(id: string, widthMm: number, heightMm: number, quantity: number, allowRotation = true) {
+  return { id, widthMm, heightMm, quantity, allowRotation }
+}
+
+describe('optimizeSheetCut', () => {
+  it('caso de referência: peças estreitas preenchem o espaço deixado pelas grandes — 1 chapa, ~97,22%', () => {
+    const result = optimizeSheetCut({
       sheetWidthMm: 1200,
-      sheetLengthMm: 3000,
+      sheetHeightMm: 3000,
       kerfMm: 0,
-      allowRotation: false,
-      items: [{ widthMm: 300, lengthMm: 300, quantity: 40 }],
+      items: [item('a', 500, 500, 10), item('b', 100, 500, 20)],
     })
 
     expect(result.requiredSheetCount).toBe(1)
-    expect(result.items[0]?.placedQuantity).toBe(40)
+    expect(result.placedPieceCount).toBe(30)
+    expect(result.requestedPieceCount).toBe(30)
+    expect(result.utilizationPercentage).toBeCloseTo(97.22, 1)
   })
 
-  it('teste 2: duas chapas — 40 peças em cada uma', () => {
-    const result = calculateSheetCutPlan({
+  it('teste 1: uma única medida — 40 peças em 1 chapa', () => {
+    const result = optimizeSheetCut({
       sheetWidthMm: 1200,
-      sheetLengthMm: 3000,
+      sheetHeightMm: 3000,
       kerfMm: 0,
-      allowRotation: false,
-      items: [{ widthMm: 300, lengthMm: 300, quantity: 80 }],
-    })
-
-    expect(result.requiredSheetCount).toBe(2)
-    expect(result.layouts[0]?.placements).toHaveLength(40)
-    expect(result.layouts[1]?.placements).toHaveLength(40)
-  })
-
-  it('teste 3: última chapa parcial — chapa 1 com 40, chapa 2 com 5', () => {
-    const result = calculateSheetCutPlan({
-      sheetWidthMm: 1200,
-      sheetLengthMm: 3000,
-      kerfMm: 0,
-      allowRotation: false,
-      items: [{ widthMm: 300, lengthMm: 300, quantity: 45 }],
-    })
-
-    expect(result.requiredSheetCount).toBe(2)
-    expect(result.layouts[0]?.placements).toHaveLength(40)
-    expect(result.layouts[1]?.placements).toHaveLength(5)
-  })
-
-  it('teste 4: corte com espessura — 27 peças por chapa (3 colunas × 9 linhas)', () => {
-    const result = calculateSheetCutPlan({
-      sheetWidthMm: 1200,
-      sheetLengthMm: 3000,
-      kerfMm: 3,
-      allowRotation: false,
-      items: [{ widthMm: 300, lengthMm: 300, quantity: 27 }],
+      items: [item('a', 300, 300, 40)],
     })
 
     expect(result.requiredSheetCount).toBe(1)
-    expect(result.layouts[0]?.placements).toHaveLength(27)
+    expect(result.placedPieceCount).toBe(40)
   })
 
-  it('teste 7: peça impossível — bloqueia o cálculo', () => {
-    const input: CalculateSheetCutInput = {
-      sheetWidthMm: 1200,
-      sheetLengthMm: 3000,
+  it('teste 2: peças grandes e pequenas juntas — as pequenas ocupam a sobra das grandes', () => {
+    const result = optimizeSheetCut({
+      sheetWidthMm: 1000,
+      sheetHeightMm: 1000,
       kerfMm: 0,
-      allowRotation: true,
-      items: [{ widthMm: 1300, lengthMm: 3100, quantity: 1 }],
-    }
-
-    expect(() => calculateSheetCutPlan(input)).toThrow()
-  })
-
-  it('teste 8: área da chapa e da peça calculadas corretamente', () => {
-    expect(calculateAreaM2(1200, 3000)).toBeCloseTo(3.6, 5)
-    expect(calculateAreaM2(300, 300)).toBeCloseTo(0.09, 5)
-  })
-})
-
-describe('calculateSheetCutPlan — várias medidas na mesma chapa', () => {
-  it('mistura 300×300 e 50×440 na mesma chapa, atendendo as duas quantidades', () => {
-    const result = calculateSheetCutPlan({
-      sheetWidthMm: 1200,
-      sheetLengthMm: 3000,
-      kerfMm: 3,
-      allowRotation: true,
-      items: [
-        { widthMm: 300, lengthMm: 300, quantity: 20 },
-        { widthMm: 50, lengthMm: 440, quantity: 30 },
-      ],
+      items: [item('big', 600, 600, 1), item('small', 200, 200, 12)],
     })
 
-    const big = result.items.find((item) => item.widthMm === 300)
-    const small = result.items.find((item) => item.widthMm === 50)
-    expect(big?.placedQuantity).toBe(20)
-    expect(small?.placedQuantity).toBe(30)
-    expect(result.totalPlacedPieces).toBe(50)
+    // 600x600 num canto + até 12 quadrados de 200x200 no L restante (1.000.000 - 360.000 = 640.000mm² / 40.000mm² = 16 possíveis)
+    expect(result.requiredSheetCount).toBe(1)
+    expect(result.placedPieceCount).toBe(13)
   })
 
-  it('nenhuma peça ultrapassa os limites da chapa quando há tamanhos diferentes', () => {
-    const result = calculateSheetCutPlan({
-      sheetWidthMm: 1200,
-      sheetLengthMm: 3000,
-      kerfMm: 3,
-      allowRotation: true,
-      items: [
-        { widthMm: 300, lengthMm: 300, quantity: 15 },
-        { widthMm: 50, lengthMm: 440, quantity: 25 },
-        { widthMm: 700, lengthMm: 200, quantity: 4 },
-      ],
+  it('teste 3: rotação necessária — peça só cabe girada', () => {
+    const result = optimizeSheetCut({
+      sheetWidthMm: 500,
+      sheetHeightMm: 1000,
+      kerfMm: 0,
+      items: [item('a', 800, 300, 1, true)],
     })
 
-    for (const layout of result.layouts) {
-      for (const placement of layout.placements) {
-        expect(placement.xMm).toBeGreaterThanOrEqual(0)
-        expect(placement.yMm).toBeGreaterThanOrEqual(0)
-        expect(placement.xMm + placement.placedWidthMm).toBeLessThanOrEqual(result.sheetWidthMm)
-        expect(placement.yMm + placement.placedLengthMm).toBeLessThanOrEqual(result.sheetLengthMm)
+    expect(result.placedPieceCount).toBe(1)
+    expect(result.sheets[0]?.placements[0]?.rotated).toBe(true)
+  })
+
+  it('teste 4: rotação desativada não gira a peça mesmo quando ajudaria', () => {
+    const result = optimizeSheetCut({
+      sheetWidthMm: 1200,
+      sheetHeightMm: 3000,
+      kerfMm: 0,
+      items: [item('a', 300, 100, 6, false)],
+    })
+
+    for (const sheet of result.sheets) {
+      for (const placement of sheet.placements) {
+        expect(placement.rotated).toBe(false)
       }
     }
   })
 
-  it('duas peças da mesma linha nunca se sobrepõem (larguras variadas)', () => {
-    const result = calculateSheetCutPlan({
+  it('teste 5: espessura do corte recusa peças que caberiam nominalmente', () => {
+    // 4 peças de 300mm cabem em 1200mm sem corte, mas não com 3mm de corte entre elas.
+    const withoutKerf = optimizeSheetCut({
       sheetWidthMm: 1200,
-      sheetLengthMm: 3000,
+      sheetHeightMm: 300,
+      kerfMm: 0,
+      items: [item('a', 300, 300, 4, false)],
+    })
+    expect(withoutKerf.requiredSheetCount).toBe(1)
+
+    const withKerf = optimizeSheetCut({
+      sheetWidthMm: 1200,
+      sheetHeightMm: 300,
       kerfMm: 3,
-      allowRotation: true,
-      items: [
-        { widthMm: 300, lengthMm: 300, quantity: 15 },
-        { widthMm: 50, lengthMm: 440, quantity: 25 },
-      ],
+      items: [item('a', 300, 300, 4, false)],
+    })
+    expect(withKerf.requiredSheetCount).toBe(2)
+  })
+
+  it('teste 6: peça maior que a chapa nas duas orientações bloqueia o cálculo', () => {
+    const input: OptimizeSheetCutInput = {
+      sheetWidthMm: 1200,
+      sheetHeightMm: 3000,
+      kerfMm: 0,
+      items: [item('a', 1300, 3100, 1, true)],
+    }
+    expect(() => optimizeSheetCut(input)).toThrow()
+  })
+
+  it('teste 7: quantidade solicitada === quantidade posicionada', () => {
+    const result = optimizeSheetCut({
+      sheetWidthMm: 1200,
+      sheetHeightMm: 3000,
+      kerfMm: 3,
+      items: [item('a', 500, 500, 10), item('b', 100, 500, 20)],
+    })
+    expect(result.placedPieceCount).toBe(result.requestedPieceCount)
+    for (const summary of result.items) {
+      expect(summary.placedQuantity).toBe(summary.requestedQuantity)
+    }
+  })
+
+  it('teste 8: nenhuma peça se sobrepõe em nenhuma chapa', () => {
+    const result = optimizeSheetCut({
+      sheetWidthMm: 1200,
+      sheetHeightMm: 3000,
+      kerfMm: 3,
+      items: [item('a', 500, 500, 10), item('b', 100, 500, 20), item('c', 700, 200, 4)],
     })
 
-    for (const layout of result.layouts) {
-      const rows = new Map<number, typeof layout.placements>()
-      for (const placement of layout.placements) {
-        const row = rows.get(placement.rowIndex) ?? []
-        row.push(placement)
-        rows.set(placement.rowIndex, row)
-      }
-      for (const placements of rows.values()) {
-        const sorted = [...placements].sort((a, b) => a.xMm - b.xMm)
-        for (let i = 0; i < sorted.length - 1; i++) {
-          const current = sorted[i]
-          const next = sorted[i + 1]
-          expect(current!.xMm + current!.placedWidthMm).toBeLessThanOrEqual(next!.xMm)
+    for (const sheet of result.sheets) {
+      const placements = sheet.placements
+      for (let i = 0; i < placements.length; i++) {
+        for (let j = i + 1; j < placements.length; j++) {
+          const a = placements[i]!
+          const b = placements[j]!
+          const noOverlap =
+            a.xMm + a.widthMm + 3 <= b.xMm ||
+            b.xMm + b.widthMm + 3 <= a.xMm ||
+            a.yMm + a.heightMm + 3 <= b.yMm ||
+            b.yMm + b.heightMm + 3 <= a.yMm
+          expect(noOverlap).toBe(true)
         }
       }
     }
   })
 
-  it('duas medidas iguais adicionadas em linhas separadas são somadas', () => {
-    const result = calculateSheetCutPlan({
+  it('teste 9: nenhuma coordenada é negativa ou ultrapassa a chapa', () => {
+    const result = optimizeSheetCut({
       sheetWidthMm: 1200,
-      sheetLengthMm: 3000,
-      kerfMm: 0,
-      allowRotation: false,
-      items: [
-        { widthMm: 300, lengthMm: 300, quantity: 10 },
-        { widthMm: 300, lengthMm: 300, quantity: 5 },
-      ],
-    })
-
-    expect(result.items).toHaveLength(1)
-    expect(result.items[0]?.requestedQuantity).toBe(15)
-    expect(result.items[0]?.placedQuantity).toBe(15)
-  })
-
-  it('bloqueia quando qualquer uma das medidas não cabe na chapa', () => {
-    const input: CalculateSheetCutInput = {
-      sheetWidthMm: 1200,
-      sheetLengthMm: 3000,
-      kerfMm: 0,
-      allowRotation: false,
-      items: [
-        { widthMm: 300, lengthMm: 300, quantity: 5 },
-        { widthMm: 1300, lengthMm: 3100, quantity: 1 },
-      ],
-    }
-
-    expect(() => calculateSheetCutPlan(input)).toThrow()
-  })
-
-  it('determinismo — mesma entrada gera o mesmo desenho e a mesma distribuição', () => {
-    const input: CalculateSheetCutInput = {
-      sheetWidthMm: 1200,
-      sheetLengthMm: 3000,
+      sheetHeightMm: 3000,
       kerfMm: 3,
-      allowRotation: true,
-      items: [
-        { widthMm: 300, lengthMm: 300, quantity: 20 },
-        { widthMm: 50, lengthMm: 440, quantity: 30 },
-      ],
+      items: [item('a', 500, 500, 10), item('b', 100, 500, 20)],
+    })
+
+    for (const sheet of result.sheets) {
+      for (const placement of sheet.placements) {
+        expect(placement.xMm).toBeGreaterThanOrEqual(0)
+        expect(placement.yMm).toBeGreaterThanOrEqual(0)
+        expect(placement.xMm + placement.widthMm).toBeLessThanOrEqual(1200)
+        expect(placement.yMm + placement.heightMm).toBeLessThanOrEqual(3000)
+      }
+    }
+  })
+
+  it('teste 10: determinismo — mesma entrada gera a mesma quantidade de chapas, coordenadas e orientações', () => {
+    const input: OptimizeSheetCutInput = {
+      sheetWidthMm: 1200,
+      sheetHeightMm: 3000,
+      kerfMm: 3,
+      items: [item('a', 500, 500, 10), item('b', 100, 500, 20)],
     }
 
-    const first = calculateSheetCutPlan(input)
-    const second = calculateSheetCutPlan(input)
+    const first = optimizeSheetCut(input)
+    const second = optimizeSheetCut(input)
     expect(second).toEqual(first)
-  })
-
-  it('rotação ajuda a encaixar peças estreitas e altas quando permitida', () => {
-    const withRotation = calculateSheetCutPlan({
-      sheetWidthMm: 500,
-      sheetLengthMm: 1000,
-      kerfMm: 0,
-      allowRotation: true,
-      items: [{ widthMm: 300, lengthMm: 100, quantity: 15 }],
-    })
-    const withoutRotation = calculateSheetCutPlan({
-      sheetWidthMm: 500,
-      sheetLengthMm: 1000,
-      kerfMm: 0,
-      allowRotation: false,
-      items: [{ widthMm: 300, lengthMm: 100, quantity: 15 }],
-    })
-
-    expect(withRotation.requiredSheetCount).toBeLessThanOrEqual(withoutRotation.requiredSheetCount)
-    expect(withRotation.requiredSheetCount).toBe(1)
-  })
-
-  it('área total das peças soma corretamente as diferentes medidas', () => {
-    const result = calculateSheetCutPlan({
-      sheetWidthMm: 1200,
-      sheetLengthMm: 3000,
-      kerfMm: 0,
-      allowRotation: false,
-      items: [
-        { widthMm: 300, lengthMm: 300, quantity: 10 },
-        { widthMm: 50, lengthMm: 440, quantity: 20 },
-      ],
-    })
-
-    const expectedArea = calculateAreaM2(300, 300) * 10 + calculateAreaM2(50, 440) * 20
-    expect(result.requestedAreaM2).toBeCloseTo(expectedArea, 5)
   })
 })

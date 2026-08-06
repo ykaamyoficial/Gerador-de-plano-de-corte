@@ -1,7 +1,7 @@
+import type { OptimizedSheetLayout, SheetCuttingOrder } from '../../domain/sheet-cutting/types'
 import { formatMm } from '../../shared/formatters/formatMm'
 import { formatAreaM2, formatPercentage } from '../../shared/formatters/formatArea'
 import { buildColorMapByKey } from '../../shared/pieceColors'
-import type { SheetCuttingOrder, SheetLayoutResult } from '../../domain/sheet-cutting/types'
 import { SheetLayoutView } from './SheetLayoutView'
 
 interface SheetCuttingReportProps {
@@ -11,14 +11,17 @@ interface SheetCuttingReportProps {
 interface LayoutGroup {
   startSheet: number
   endSheet: number
-  layout: SheetLayoutResult
+  layout: OptimizedSheetLayout
 }
 
-function layoutSignature(layout: SheetLayoutResult): string {
-  return layout.placements.map((p) => `${p.itemId}:${p.xMm}:${p.yMm}:${p.placedWidthMm}:${p.placedLengthMm}`).join('|')
+function layoutSignature(layout: OptimizedSheetLayout): string {
+  return layout.placements
+    .map((p) => `${p.itemId}:${p.xMm}:${p.yMm}:${p.widthMm}:${p.heightMm}`)
+    .sort()
+    .join('|')
 }
 
-function groupIdenticalLayouts(layouts: readonly SheetLayoutResult[]): LayoutGroup[] {
+function groupIdenticalLayouts(layouts: readonly OptimizedSheetLayout[]): LayoutGroup[] {
   const groups: LayoutGroup[] = []
   for (const layout of layouts) {
     const signature = layoutSignature(layout)
@@ -37,7 +40,9 @@ function formatToday(): string {
 }
 
 export function SheetCuttingReport({ order }: SheetCuttingReportProps) {
-  const calculatedPlans = order.plans.filter((plan) => plan.calculationStatus === 'calculated' && plan.result !== null)
+  const calculatedPlans = order.plans.filter(
+    (plan) => plan.calculationStatus === 'calculated' && plan.result !== null && plan.sheetWidthMm && plan.sheetLengthMm,
+  )
 
   return (
     <div className="report">
@@ -53,8 +58,8 @@ export function SheetCuttingReport({ order }: SheetCuttingReportProps) {
           <div className="report__summary-item" key={plan.id}>
             <p className="report__summary-material">{plan.materialName || 'Material sem nome'}</p>
             <p>
-              {plan.result?.requiredSheetCount} chapas inteiras de {formatMm(plan.result?.sheetWidthMm ?? 0)} ×{' '}
-              {formatMm(plan.result?.sheetLengthMm ?? 0)}
+              {plan.result?.requiredSheetCount} chapas inteiras de {formatMm(plan.sheetWidthMm ?? 0)} ×{' '}
+              {formatMm(plan.sheetLengthMm ?? 0)}
             </p>
           </div>
         ))}
@@ -62,10 +67,12 @@ export function SheetCuttingReport({ order }: SheetCuttingReportProps) {
 
       {calculatedPlans.map((plan, planIndex) => {
         const result = plan.result
-        if (!result) return null
+        const sheetWidthMm = plan.sheetWidthMm
+        const sheetHeightMm = plan.sheetLengthMm
+        if (!result || !sheetWidthMm || !sheetHeightMm) return null
 
         const colorMap = buildColorMapByKey(result.items, (item) => item.itemId)
-        const groups = groupIdenticalLayouts(result.layouts)
+        const groups = groupIdenticalLayouts(result.sheets)
 
         return (
           <section className="report__plan" key={plan.id}>
@@ -73,11 +80,13 @@ export function SheetCuttingReport({ order }: SheetCuttingReportProps) {
               PLANO {planIndex + 1} — {(plan.materialName || 'MATERIAL SEM NOME').toUpperCase()}
             </h2>
             <div className="report__plan-meta">
-              <p>Chapa inteira: {formatMm(result.sheetWidthMm)} × {formatMm(result.sheetLengthMm)}</p>
-              <p>Espessura do corte: {formatMm(result.kerfMm)}</p>
-              <p>Quantidade solicitada: {result.totalRequestedPieces}</p>
+              <p>
+                Chapa inteira: {formatMm(sheetWidthMm)} × {formatMm(sheetHeightMm)}
+              </p>
+              <p>Espessura do corte: {formatMm(plan.kerfMm ?? 0)}</p>
+              <p>Quantidade solicitada: {result.requestedPieceCount}</p>
               <p>Chapas necessárias: {result.requiredSheetCount}</p>
-              <p>Rotação permitida: {result.allowRotation ? 'sim' : 'não'}</p>
+              <p>Rotação permitida: {plan.allowRotation ? 'sim' : 'não'}</p>
             </div>
 
             <table className="report__table">
@@ -91,7 +100,9 @@ export function SheetCuttingReport({ order }: SheetCuttingReportProps) {
               <tbody>
                 {result.items.map((item) => (
                   <tr key={item.itemId} className="report__table-row">
-                    <td>{item.widthMm} × {item.lengthMm} mm</td>
+                    <td>
+                      {item.widthMm} × {item.heightMm} mm
+                    </td>
                     <td>{item.requestedQuantity}</td>
                     <td>{item.placedQuantity}</td>
                   </tr>
@@ -104,22 +115,23 @@ export function SheetCuttingReport({ order }: SheetCuttingReportProps) {
                 <tr>
                   <th>Chapa</th>
                   <th>Quantidade de peças</th>
+                  <th>Aproveitamento</th>
                 </tr>
               </thead>
               <tbody>
-                {result.layouts.map((layout) => (
+                {result.sheets.map((layout) => (
                   <tr key={layout.sheetNumber} className="report__table-row">
                     <td>{String(layout.sheetNumber).padStart(2, '0')}</td>
                     <td>{layout.placements.length}</td>
+                    <td>{formatPercentage(layout.utilizationPercentage)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
 
             <div className="report__sheet-area">
-              <p>Área de cada chapa: {formatAreaM2(result.sheetAreaM2)}</p>
-              <p>Área total das peças: {formatAreaM2(result.requestedAreaM2)}</p>
-              <p>Área total das chapas utilizadas: {formatAreaM2(result.purchasedAreaM2)}</p>
+              <p>Área total das peças: {formatAreaM2(result.totalPieceAreaM2)}</p>
+              <p>Área total das chapas utilizadas: {formatAreaM2(result.totalSheetAreaM2)}</p>
               <p>Aproveitamento da área: {formatPercentage(result.utilizationPercentage)}</p>
             </div>
 
@@ -135,8 +147,8 @@ export function SheetCuttingReport({ order }: SheetCuttingReportProps) {
                     <span className="sheet-layout-card__count">{group.layout.placements.length} peças</span>
                   </div>
                   <SheetLayoutView
-                    sheetWidthMm={result.sheetWidthMm}
-                    sheetLengthMm={result.sheetLengthMm}
+                    sheetWidthMm={sheetWidthMm}
+                    sheetHeightMm={sheetHeightMm}
                     placements={group.layout.placements}
                     colorMap={colorMap}
                     ariaLabel={`Desenho da chapa ${group.startSheet}`}

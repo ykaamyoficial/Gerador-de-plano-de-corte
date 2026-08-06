@@ -1,8 +1,27 @@
 import { useState } from 'react'
-import { calculateSheetCutPlan } from '../../domain/sheet-cutting/calculateSheetCutPlan'
+import { optimizeSheetCut } from '../../domain/sheet-cutting/optimizeSheetCut'
 import { validateSheetPlan } from '../../domain/sheet-cutting/validation'
-import type { SheetCuttingItem, SheetCuttingOrder, SheetCuttingPlan } from '../../domain/sheet-cutting/types'
+import type { SheetCutItem, SheetCuttingItem, SheetCuttingOrder, SheetCuttingPlan } from '../../domain/sheet-cutting/types'
 import { createId } from '../../shared/utils/id'
+
+/** Merges rows that share the same width×height into one measure with a summed quantity, same as the linear module's item normalization. */
+function normalizeItems(
+  items: readonly { widthMm: number; heightMm: number; quantity: number; allowRotation: boolean }[],
+): SheetCutItem[] {
+  const grouped = new Map<string, SheetCutItem>()
+  for (const item of items) {
+    const id = `${item.widthMm}x${item.heightMm}`
+    const existing = grouped.get(id)
+    grouped.set(id, {
+      id,
+      widthMm: item.widthMm,
+      heightMm: item.heightMm,
+      quantity: (existing?.quantity ?? 0) + item.quantity,
+      allowRotation: item.allowRotation,
+    })
+  }
+  return Array.from(grouped.values())
+}
 
 function createEmptyItem(): SheetCuttingItem {
   return { id: createId(), widthMm: null, lengthMm: null, quantity: null }
@@ -111,16 +130,18 @@ export function useSheetCuttingOrder() {
     })
 
     try {
-      const output = calculateSheetCutPlan({
+      const output = optimizeSheetCut({
         sheetWidthMm: plan.sheetWidthMm as number,
-        sheetLengthMm: plan.sheetLengthMm as number,
+        sheetHeightMm: plan.sheetLengthMm as number,
         kerfMm: plan.kerfMm as number,
-        allowRotation: plan.allowRotation,
-        items: validItems.map((item) => ({
-          widthMm: item.widthMm as number,
-          lengthMm: item.lengthMm as number,
-          quantity: item.quantity as number,
-        })),
+        items: normalizeItems(
+          validItems.map((item) => ({
+            widthMm: item.widthMm as number,
+            heightMm: item.lengthMm as number,
+            quantity: item.quantity as number,
+            allowRotation: plan.allowRotation,
+          })),
+        ),
       })
 
       updatePlan(planId, (current) => ({ ...current, result: output, calculationStatus: 'calculated' }))
