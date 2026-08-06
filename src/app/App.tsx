@@ -119,11 +119,11 @@ function App() {
               onUpdateMaterial={(value) => sheet.setMaterialName(plan.id, value)}
               onUpdateSheetWidth={(value) => sheet.setSheetWidth(plan.id, value)}
               onUpdateSheetLength={(value) => sheet.setSheetLength(plan.id, value)}
-              onUpdatePieceWidth={(value) => sheet.setPieceWidth(plan.id, value)}
-              onUpdatePieceLength={(value) => sheet.setPieceLength(plan.id, value)}
-              onUpdateQuantity={(value) => sheet.setQuantity(plan.id, value)}
               onUpdateKerf={(value) => sheet.setKerf(plan.id, value)}
               onUpdateAllowRotation={(value) => sheet.setAllowRotation(plan.id, value)}
+              onAddItem={() => sheet.addItem(plan.id)}
+              onUpdateItem={(itemId, partial) => sheet.updateItem(plan.id, itemId, partial)}
+              onRemoveItem={(itemId) => sheet.removeItem(plan.id, itemId)}
               onCalculate={() => sheet.calculatePlan(plan.id)}
               onRemovePlan={() => sheet.removePlan(plan.id)}
             />

@@ -1,13 +1,36 @@
 import { formatMm } from '../../shared/formatters/formatMm'
 import { formatAreaM2, formatPercentage } from '../../shared/formatters/formatArea'
-import type { SheetCuttingOrder } from '../../domain/sheet-cutting/types'
+import { buildColorMapByKey } from '../../shared/pieceColors'
+import type { SheetCuttingOrder, SheetLayoutResult } from '../../domain/sheet-cutting/types'
 import { SheetLayoutView } from './SheetLayoutView'
 
 interface SheetCuttingReportProps {
   order: SheetCuttingOrder
 }
 
-const ORIENTATION_LABEL = { normal: 'normal', rotated: 'girada 90°' } as const
+interface LayoutGroup {
+  startSheet: number
+  endSheet: number
+  layout: SheetLayoutResult
+}
+
+function layoutSignature(layout: SheetLayoutResult): string {
+  return layout.placements.map((p) => `${p.itemId}:${p.xMm}:${p.yMm}:${p.placedWidthMm}:${p.placedLengthMm}`).join('|')
+}
+
+function groupIdenticalLayouts(layouts: readonly SheetLayoutResult[]): LayoutGroup[] {
+  const groups: LayoutGroup[] = []
+  for (const layout of layouts) {
+    const signature = layoutSignature(layout)
+    const last = groups[groups.length - 1]
+    if (last && layoutSignature(last.layout) === signature) {
+      last.endSheet = layout.sheetNumber
+    } else {
+      groups.push({ startSheet: layout.sheetNumber, endSheet: layout.sheetNumber, layout })
+    }
+  }
+  return groups
+}
 
 function formatToday(): string {
   return new Date().toLocaleDateString('pt-BR')
@@ -41,9 +64,8 @@ export function SheetCuttingReport({ order }: SheetCuttingReportProps) {
         const result = plan.result
         if (!result) return null
 
-        const fullSheetsCount = result.layouts.filter((layout) => layout.isFull).length
-        const partialSheet = result.layouts.find((layout) => !layout.isFull) ?? null
-        const representativeFullLayout = result.layouts.find((layout) => layout.isFull) ?? null
+        const colorMap = buildColorMapByKey(result.items, (item) => item.itemId)
+        const groups = groupIdenticalLayouts(result.layouts)
 
         return (
           <section className="report__plan" key={plan.id}>
@@ -52,29 +74,43 @@ export function SheetCuttingReport({ order }: SheetCuttingReportProps) {
             </h2>
             <div className="report__plan-meta">
               <p>Chapa inteira: {formatMm(result.sheetWidthMm)} × {formatMm(result.sheetLengthMm)}</p>
-              <p>Peça: {formatMm(result.originalPieceWidthMm)} × {formatMm(result.originalPieceLengthMm)}</p>
-              <p>Quantidade solicitada: {result.requestedQuantity}</p>
               <p>Espessura do corte: {formatMm(result.kerfMm)}</p>
+              <p>Quantidade solicitada: {result.totalRequestedPieces}</p>
               <p>Chapas necessárias: {result.requiredSheetCount}</p>
-              <p>Peças por chapa completa: {result.piecesPerFullSheet}</p>
-              <p>Distribuição: {result.columns} colunas × {result.rows} linhas</p>
-              <p>Orientação: {ORIENTATION_LABEL[result.orientation]}</p>
+              <p>Rotação permitida: {result.allowRotation ? 'sim' : 'não'}</p>
             </div>
+
+            <table className="report__table">
+              <thead>
+                <tr>
+                  <th>Medida</th>
+                  <th>Solicitadas</th>
+                  <th>Distribuídas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.items.map((item) => (
+                  <tr key={item.itemId} className="report__table-row">
+                    <td>{item.widthMm} × {item.lengthMm} mm</td>
+                    <td>{item.requestedQuantity}</td>
+                    <td>{item.placedQuantity}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
 
             <table className="report__table">
               <thead>
                 <tr>
                   <th>Chapa</th>
                   <th>Quantidade de peças</th>
-                  <th>Distribuição</th>
                 </tr>
               </thead>
               <tbody>
                 {result.layouts.map((layout) => (
                   <tr key={layout.sheetNumber} className="report__table-row">
                     <td>{String(layout.sheetNumber).padStart(2, '0')}</td>
-                    <td>{layout.placedPieceCount}</td>
-                    <td>{layout.isFull ? `${result.columns} × ${result.rows}` : 'parcial'}</td>
+                    <td>{layout.placements.length}</td>
                   </tr>
                 ))}
               </tbody>
@@ -82,57 +118,32 @@ export function SheetCuttingReport({ order }: SheetCuttingReportProps) {
 
             <div className="report__sheet-area">
               <p>Área de cada chapa: {formatAreaM2(result.sheetAreaM2)}</p>
-              <p>Área de cada peça: {formatAreaM2(result.pieceAreaM2)}</p>
               <p>Área total das peças: {formatAreaM2(result.requestedAreaM2)}</p>
               <p>Área total das chapas utilizadas: {formatAreaM2(result.purchasedAreaM2)}</p>
               <p>Aproveitamento da área: {formatPercentage(result.utilizationPercentage)}</p>
             </div>
 
             <div className="report__sheet-drawings">
-              {representativeFullLayout && (
-                <div className="sheet-layout-card">
+              {groups.map((group) => (
+                <div className="sheet-layout-card" key={group.startSheet}>
                   <div className="sheet-layout-card__header">
                     <span className="sheet-layout-card__title">
-                      {fullSheetsCount > 1 ? `CHAPAS 1 A ${fullSheetsCount}` : 'CHAPA 01'}
+                      {group.startSheet === group.endSheet
+                        ? `CHAPA ${String(group.startSheet).padStart(2, '0')}`
+                        : `CHAPAS ${group.startSheet} A ${group.endSheet}`}
                     </span>
-                    <span className="sheet-layout-card__count">{result.piecesPerFullSheet} peças por chapa</span>
+                    <span className="sheet-layout-card__count">{group.layout.placements.length} peças</span>
                   </div>
                   <SheetLayoutView
                     sheetWidthMm={result.sheetWidthMm}
                     sheetLengthMm={result.sheetLengthMm}
-                    placedPieceWidthMm={result.placedPieceWidthMm}
-                    placedPieceLengthMm={result.placedPieceLengthMm}
-                    kerfMm={result.kerfMm}
-                    columns={result.columns}
-                    rows={result.rows}
-                    placements={representativeFullLayout.placements}
-                    ariaLabel="Desenho das chapas completas"
+                    placements={group.layout.placements}
+                    colorMap={colorMap}
+                    ariaLabel={`Desenho da chapa ${group.startSheet}`}
                     animate={false}
                   />
                 </div>
-              )}
-              {partialSheet && (
-                <div className="sheet-layout-card">
-                  <div className="sheet-layout-card__header">
-                    <span className="sheet-layout-card__title">
-                      CHAPA {String(partialSheet.sheetNumber).padStart(2, '0')} — PARCIAL
-                    </span>
-                    <span className="sheet-layout-card__count">{partialSheet.placedPieceCount} peças</span>
-                  </div>
-                  <SheetLayoutView
-                    sheetWidthMm={result.sheetWidthMm}
-                    sheetLengthMm={result.sheetLengthMm}
-                    placedPieceWidthMm={result.placedPieceWidthMm}
-                    placedPieceLengthMm={result.placedPieceLengthMm}
-                    kerfMm={result.kerfMm}
-                    columns={result.columns}
-                    rows={result.rows}
-                    placements={partialSheet.placements}
-                    ariaLabel="Desenho da última chapa, parcial"
-                    animate={false}
-                  />
-                </div>
-              )}
+              ))}
             </div>
           </section>
         )

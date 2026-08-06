@@ -1,4 +1,4 @@
-import type { CalculateSheetCutInput, SheetCuttingResult } from './types'
+import type { CalculateSheetCutInput, SheetCuttingResult, SheetPiecePlacement } from './types'
 
 export interface SheetResultValidation {
   isValid: boolean
@@ -6,9 +6,11 @@ export interface SheetResultValidation {
 }
 
 /**
- * Independently re-checks a calculateSheetCutPlan result. A result must
- * pass this validation before it is shown to the user (mirrors the linear
- * module's resultValidator).
+ * Independently re-checks a calculateSheetCutPlan result: every requested
+ * piece is accounted for, no piece falls outside the sheet, and no two
+ * pieces overlap (checked row-by-row, then row-band by row-band, which is
+ * safe and fast even for sheets with thousands of small pieces since it
+ * never compares every pair).
  */
 export function validateSheetCuttingResult(
   input: CalculateSheetCutInput,
@@ -19,78 +21,79 @@ export function validateSheetCuttingResult(
   if (result.requiredSheetCount <= 0) {
     errors.push('A quantidade de chapas deve ser maior que zero.')
   }
-
   if (result.layouts.length !== result.requiredSheetCount) {
     errors.push('O número de desenhos de chapa não corresponde à quantidade de chapas necessárias.')
   }
-
-  const totalPlaced = result.layouts.reduce((sum, layout) => sum + layout.placedPieceCount, 0)
-  if (totalPlaced !== result.requestedQuantity) {
-    errors.push('A quantidade de peças distribuídas não corresponde à quantidade solicitada.')
+  if (result.totalPlacedPieces !== result.totalRequestedPieces) {
+    errors.push('A quantidade total de peças distribuídas não corresponde ao total solicitado.')
   }
-  if (totalPlaced !== input.quantity) {
-    errors.push('A quantidade de peças distribuídas não corresponde à quantidade informada.')
+
+  for (const item of result.items) {
+    if (item.placedQuantity !== item.requestedQuantity) {
+      errors.push(
+        `A medida de ${item.widthMm} × ${item.lengthMm} mm não foi totalmente atendida (${item.placedQuantity}/${item.requestedQuantity}).`,
+      )
+    }
+  }
+
+  const requestedTotalFromInput = input.items
+    .filter((item) => Number.isInteger(item.widthMm) && item.widthMm > 0)
+    .filter((item) => Number.isInteger(item.lengthMm) && item.lengthMm > 0)
+    .filter((item) => Number.isInteger(item.quantity) && item.quantity > 0)
+    .reduce((sum, item) => sum + item.quantity, 0)
+  if (requestedTotalFromInput !== result.totalRequestedPieces) {
+    errors.push('A quantidade total solicitada não corresponde à entrada original.')
   }
 
   for (const layout of result.layouts) {
-    if (layout.placedPieceCount > result.piecesPerFullSheet) {
-      errors.push(`A chapa ${layout.sheetNumber} possui mais peças do que a capacidade da chapa.`)
-    }
-    if (layout.placedPieceCount === 0) {
-      errors.push(`A chapa ${layout.sheetNumber} não possui nenhuma peça.`)
-    }
-    if (layout.isFull !== (layout.placedPieceCount === result.piecesPerFullSheet)) {
-      errors.push(`O indicador de chapa completa da chapa ${layout.sheetNumber} está incorreto.`)
-    }
+    const rows = new Map<number, SheetPiecePlacement[]>()
 
-    const seenCells = new Set<string>()
     for (const placement of layout.placements) {
-      const expectedX = placement.column * (result.placedPieceWidthMm + result.kerfMm)
-      const expectedY = placement.row * (result.placedPieceLengthMm + result.kerfMm)
-      if (placement.xMm !== expectedX || placement.yMm !== expectedY) {
-        errors.push(`A peça ${placement.index + 1} da chapa ${layout.sheetNumber} está em uma posição incorreta.`)
+      if (placement.xMm < 0 || placement.yMm < 0) {
+        errors.push(`A peça ${placement.index + 1} da chapa ${layout.sheetNumber} tem posição inválida.`)
       }
-      if (placement.widthMm !== result.placedPieceWidthMm || placement.lengthMm !== result.placedPieceLengthMm) {
-        errors.push(`A peça ${placement.index + 1} da chapa ${layout.sheetNumber} tem dimensões incorretas.`)
+      if (placement.xMm + placement.placedWidthMm > result.sheetWidthMm) {
+        errors.push(`A peça ${placement.index + 1} da chapa ${layout.sheetNumber} ultrapassa a largura da chapa.`)
       }
-
-      const rightEdgeMm = placement.xMm + placement.widthMm
-      const bottomEdgeMm = placement.yMm + placement.lengthMm
-      if (placement.xMm < 0 || placement.yMm < 0 || rightEdgeMm > result.sheetWidthMm || bottomEdgeMm > result.sheetLengthMm) {
-        errors.push(`A peça ${placement.index + 1} da chapa ${layout.sheetNumber} ultrapassa os limites da chapa.`)
+      if (placement.yMm + placement.placedLengthMm > result.sheetLengthMm) {
+        errors.push(`A peça ${placement.index + 1} da chapa ${layout.sheetNumber} ultrapassa o comprimento da chapa.`)
       }
-      if (placement.column < 0 || placement.column >= result.columns || placement.row < 0 || placement.row >= result.rows) {
-        errors.push(`A peça ${placement.index + 1} da chapa ${layout.sheetNumber} está fora da grade calculada.`)
-      }
-
-      const cellKey = `${placement.row}:${placement.column}`
-      if (seenCells.has(cellKey)) {
-        errors.push(`Duas peças da chapa ${layout.sheetNumber} ocupam a mesma posição na grade.`)
-      }
-      seenCells.add(cellKey)
+      const rowPlacements = rows.get(placement.rowIndex) ?? []
+      rowPlacements.push(placement)
+      rows.set(placement.rowIndex, rowPlacements)
     }
-  }
 
-  if (result.orientation !== 'normal' && result.orientation !== 'rotated') {
-    errors.push('A orientação calculada é inválida.')
-  }
-  if (result.orientation === 'rotated' && !input.allowRotation) {
-    errors.push('A orientação girada foi usada mesmo com a rotação desativada.')
+    for (const [rowIndex, placements] of rows) {
+      const sorted = [...placements].sort((a, b) => a.xMm - b.xMm)
+      for (let i = 0; i < sorted.length - 1; i++) {
+        const current = sorted[i]
+        const next = sorted[i + 1]
+        if (current && next && current.xMm + current.placedWidthMm > next.xMm) {
+          errors.push(`Duas peças da linha ${rowIndex} da chapa ${layout.sheetNumber} se sobrepõem.`)
+        }
+      }
+    }
+
+    const rowBands = Array.from(rows.entries())
+      .map(([rowIndex, placements]) => ({
+        rowIndex,
+        yStart: Math.min(...placements.map((p) => p.yMm)),
+        yEnd: Math.max(...placements.map((p) => p.yMm + p.placedLengthMm)),
+      }))
+      .sort((a, b) => a.yStart - b.yStart)
+
+    for (let i = 0; i < rowBands.length - 1; i++) {
+      const current = rowBands[i]
+      const next = rowBands[i + 1]
+      if (current && next && current.yEnd > next.yStart) {
+        errors.push(`Duas linhas de peças da chapa ${layout.sheetNumber} se sobrepõem.`)
+      }
+    }
   }
 
   const expectedSheetAreaM2 = (result.sheetWidthMm * result.sheetLengthMm) / 1_000_000
   if (Math.abs(expectedSheetAreaM2 - result.sheetAreaM2) > 1e-9) {
     errors.push('A área da chapa foi calculada incorretamente.')
-  }
-
-  const expectedPieceAreaM2 = (result.originalPieceWidthMm * result.originalPieceLengthMm) / 1_000_000
-  if (Math.abs(expectedPieceAreaM2 - result.pieceAreaM2) > 1e-9) {
-    errors.push('A área da peça foi calculada incorretamente.')
-  }
-
-  const expectedRequestedAreaM2 = expectedPieceAreaM2 * result.requestedQuantity
-  if (Math.abs(expectedRequestedAreaM2 - result.requestedAreaM2) > 1e-9) {
-    errors.push('A área total das peças foi calculada incorretamente.')
   }
 
   const expectedPurchasedAreaM2 = expectedSheetAreaM2 * result.requiredSheetCount

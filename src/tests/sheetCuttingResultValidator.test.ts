@@ -7,11 +7,12 @@ describe('validateSheetCuttingResult', () => {
   const input: CalculateSheetCutInput = {
     sheetWidthMm: 1200,
     sheetLengthMm: 3000,
-    pieceWidthMm: 300,
-    pieceLengthMm: 300,
-    quantity: 45,
     kerfMm: 3,
-    allowRotation: false,
+    allowRotation: true,
+    items: [
+      { widthMm: 300, lengthMm: 300, quantity: 20 },
+      { widthMm: 50, lengthMm: 440, quantity: 30 },
+    ],
   }
 
   it('aprova um resultado real gerado pelo calculador', () => {
@@ -21,24 +22,15 @@ describe('validateSheetCuttingResult', () => {
     expect(validation.errors).toHaveLength(0)
   })
 
-  it('reprova quando uma peça é adicionada a mais do que a quantidade solicitada', () => {
+  it('reprova quando falta uma peça de uma das medidas', () => {
     const result = calculateSheetCutPlan(input)
     const lastLayout = result.layouts[result.layouts.length - 1]
     expect(lastLayout).toBeDefined()
 
     const tampered: SheetCuttingResult = {
       ...result,
-      layouts: [
-        ...result.layouts.slice(0, -1),
-        {
-          ...lastLayout!,
-          placedPieceCount: lastLayout!.placedPieceCount + 1,
-          placements: [
-            ...lastLayout!.placements,
-            { index: lastLayout!.placements.length, row: 99, column: 99, xMm: 0, yMm: 0, widthMm: 300, lengthMm: 300 },
-          ],
-        },
-      ],
+      totalPlacedPieces: result.totalPlacedPieces - 1,
+      layouts: [...result.layouts.slice(0, -1), { ...lastLayout!, placements: lastLayout!.placements.slice(0, -1) }],
     }
 
     const validation = validateSheetCuttingResult(input, tampered)
@@ -49,19 +41,12 @@ describe('validateSheetCuttingResult', () => {
     const result = calculateSheetCutPlan(input)
     const firstLayout = result.layouts[0]
     const firstPlacement = firstLayout?.placements[0]
-    expect(firstLayout).toBeDefined()
     expect(firstPlacement).toBeDefined()
 
     const tampered: SheetCuttingResult = {
       ...result,
       layouts: [
-        {
-          ...firstLayout!,
-          placements: [
-            { ...firstPlacement!, xMm: result.sheetWidthMm - 10 },
-            ...firstLayout!.placements.slice(1),
-          ],
-        },
+        { ...firstLayout!, placements: [{ ...firstPlacement!, xMm: result.sheetWidthMm - 5 }, ...firstLayout!.placements.slice(1)] },
         ...result.layouts.slice(1),
       ],
     }
@@ -70,7 +55,7 @@ describe('validateSheetCuttingResult', () => {
     expect(validation.isValid).toBe(false)
   })
 
-  it('reprova quando duas peças ocupam a mesma célula da grade', () => {
+  it('reprova quando duas peças da mesma linha se sobrepõem', () => {
     const result = calculateSheetCutPlan(input)
     const firstLayout = result.layouts[0]
     const [first, second] = firstLayout?.placements ?? []
@@ -82,11 +67,7 @@ describe('validateSheetCuttingResult', () => {
       layouts: [
         {
           ...firstLayout!,
-          placements: [
-            first!,
-            { ...second!, row: first!.row, column: first!.column, xMm: first!.xMm, yMm: first!.yMm },
-            ...firstLayout!.placements.slice(2),
-          ],
+          placements: [first!, { ...second!, rowIndex: first!.rowIndex, xMm: first!.xMm, yMm: first!.yMm }, ...firstLayout!.placements.slice(2)],
         },
         ...result.layouts.slice(1),
       ],

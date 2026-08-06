@@ -1,89 +1,112 @@
-import { calculateAreaM2, calculateFitCount } from './calculations'
-import { createSheetLayouts } from './createSheetLayouts'
+import { calculateAreaM2 } from './calculations'
+import { packSheetPieces, type PieceInstance } from './packSheetPieces'
 import { validateSheetCuttingResult } from './resultValidator'
-import type { CalculateSheetCutInput, SheetCuttingResult, SheetOrientation } from './types'
+import type { CalculateSheetCutInput, SheetCuttingResult, SheetItemSummary, SheetLayoutResult } from './types'
+
+interface NormalizedItem {
+  itemId: string
+  widthMm: number
+  lengthMm: number
+  quantity: number
+}
+
+function normalizeItems(items: CalculateSheetCutInput['items']): NormalizedItem[] {
+  const grouped = new Map<string, NormalizedItem>()
+  for (const item of items) {
+    if (!Number.isInteger(item.widthMm) || item.widthMm <= 0) continue
+    if (!Number.isInteger(item.lengthMm) || item.lengthMm <= 0) continue
+    if (!Number.isInteger(item.quantity) || item.quantity <= 0) continue
+    const itemId = `${item.widthMm}x${item.lengthMm}`
+    const existing = grouped.get(itemId)
+    grouped.set(itemId, {
+      itemId,
+      widthMm: item.widthMm,
+      lengthMm: item.lengthMm,
+      quantity: (existing?.quantity ?? 0) + item.quantity,
+    })
+  }
+  return Array.from(grouped.values()).sort(
+    (a, b) => b.widthMm * b.lengthMm - a.widthMm * a.lengthMm || a.itemId.localeCompare(b.itemId),
+  )
+}
 
 /**
- * Finds the best axis-aligned grid packing of identical rectangular pieces
- * into rectangular sheets, comparing the normal orientation against the
- * piece rotated 90° (when allowed) and keeping whichever grid fits more
- * pieces per sheet. This is a "best grid found" search, not a general
- * nesting solver: every sheet uses a single orientation for every piece,
- * mixed orientations within one sheet are out of scope (spec section 11).
+ * Packs one or more rectangular measures (each with its own quantity) into
+ * whole sheets, comparing normal vs. rotated orientation per piece when
+ * allowed. Pure function: no React, no DOM, deterministic, unit-testable.
  */
 export function calculateSheetCutPlan(input: CalculateSheetCutInput): SheetCuttingResult {
-  const { sheetWidthMm, sheetLengthMm, pieceWidthMm, pieceLengthMm, quantity, kerfMm, allowRotation } = input
+  const { sheetWidthMm, sheetLengthMm, kerfMm, allowRotation } = input
 
-  const normalColumns = calculateFitCount(sheetWidthMm, pieceWidthMm, kerfMm)
-  const normalRows = calculateFitCount(sheetLengthMm, pieceLengthMm, kerfMm)
-  const normalCapacity = normalColumns * normalRows
-
-  let rotatedColumns = 0
-  let rotatedRows = 0
-  let rotatedCapacity = 0
-  if (allowRotation) {
-    rotatedColumns = calculateFitCount(sheetWidthMm, pieceLengthMm, kerfMm)
-    rotatedRows = calculateFitCount(sheetLengthMm, pieceWidthMm, kerfMm)
-    rotatedCapacity = rotatedColumns * rotatedRows
+  const normalizedItems = normalizeItems(input.items)
+  if (normalizedItems.length === 0) {
+    throw new Error('sheet_cut_no_pieces')
   }
 
-  let orientation: SheetOrientation = 'normal'
-  let columns = normalColumns
-  let rows = normalRows
-  let placedPieceWidthMm = pieceWidthMm
-  let placedPieceLengthMm = pieceLengthMm
-
-  // Ties keep the normal orientation so the result stays deterministic.
-  if (allowRotation && rotatedCapacity > normalCapacity) {
-    orientation = 'rotated'
-    columns = rotatedColumns
-    rows = rotatedRows
-    placedPieceWidthMm = pieceLengthMm
-    placedPieceLengthMm = pieceWidthMm
+  const pieces: PieceInstance[] = []
+  for (const item of normalizedItems) {
+    for (let i = 0; i < item.quantity; i++) {
+      pieces.push({ itemId: item.itemId, index: i, widthMm: item.widthMm, lengthMm: item.lengthMm })
+    }
   }
 
-  const piecesPerFullSheet = columns * rows
-  if (piecesPerFullSheet <= 0) {
-    throw new Error('sheet_cut_no_capacity')
-  }
+  const packedSheets = packSheetPieces(pieces, sheetWidthMm, sheetLengthMm, kerfMm, allowRotation)
 
-  const requiredSheetCount = Math.ceil(quantity / piecesPerFullSheet)
+  const layouts: SheetLayoutResult[] = packedSheets.map((sheet) => ({
+    sheetNumber: sheet.sheetNumber,
+    placements: sheet.placements.map((placement, index) => ({
+      index,
+      itemId: placement.itemId,
+      widthMm: placement.widthMm,
+      lengthMm: placement.lengthMm,
+      placedWidthMm: placement.placedWidthMm,
+      placedLengthMm: placement.placedLengthMm,
+      rotated: placement.rotated,
+      rowIndex: placement.rowIndex,
+      xMm: placement.xMm,
+      yMm: placement.yMm,
+    })),
+  }))
 
-  const layouts = createSheetLayouts({
-    quantity,
-    piecesPerFullSheet,
-    columns,
-    placedPieceWidthMm,
-    placedPieceLengthMm,
-    kerfMm,
+  const items: SheetItemSummary[] = normalizedItems.map((item) => {
+    const placedQuantity = layouts.reduce(
+      (sum, layout) => sum + layout.placements.filter((placement) => placement.itemId === item.itemId).length,
+      0,
+    )
+    return {
+      itemId: item.itemId,
+      widthMm: item.widthMm,
+      lengthMm: item.lengthMm,
+      requestedQuantity: item.quantity,
+      placedQuantity,
+    }
   })
 
+  const totalRequestedPieces = normalizedItems.reduce((sum, item) => sum + item.quantity, 0)
+  const totalPlacedPieces = layouts.reduce((sum, layout) => sum + layout.placements.length, 0)
+
   const sheetAreaM2 = calculateAreaM2(sheetWidthMm, sheetLengthMm)
-  const pieceAreaM2 = calculateAreaM2(pieceWidthMm, pieceLengthMm)
-  const requestedAreaM2 = pieceAreaM2 * quantity
-  const purchasedAreaM2 = sheetAreaM2 * requiredSheetCount
+  const requestedAreaM2 = normalizedItems.reduce(
+    (sum, item) => sum + calculateAreaM2(item.widthMm, item.lengthMm) * item.quantity,
+    0,
+  )
+  const purchasedAreaM2 = sheetAreaM2 * layouts.length
   const utilizationPercentage = purchasedAreaM2 > 0 ? (requestedAreaM2 / purchasedAreaM2) * 100 : 0
 
   const result: SheetCuttingResult = {
     sheetWidthMm,
     sheetLengthMm,
-    originalPieceWidthMm: pieceWidthMm,
-    originalPieceLengthMm: pieceLengthMm,
-    placedPieceWidthMm,
-    placedPieceLengthMm,
-    requestedQuantity: quantity,
-    piecesPerFullSheet,
-    requiredSheetCount,
-    columns,
-    rows,
-    orientation,
     kerfMm,
+    allowRotation,
+    requiredSheetCount: layouts.length,
+    totalRequestedPieces,
+    totalPlacedPieces,
+    items,
+    layouts,
     sheetAreaM2,
-    pieceAreaM2,
     requestedAreaM2,
     purchasedAreaM2,
     utilizationPercentage,
-    layouts,
   }
 
   const validation = validateSheetCuttingResult(input, result)

@@ -1,6 +1,9 @@
+import { useMemo, useState } from 'react'
+import { Button } from '../../components/ui/Button'
+import type { SheetCuttingResult as SheetCuttingResultData, SheetLayoutResult } from '../../domain/sheet-cutting/types'
 import { formatMm } from '../../shared/formatters/formatMm'
 import { formatAreaM2, formatPercentage } from '../../shared/formatters/formatArea'
-import type { SheetCuttingResult as SheetCuttingResultData } from '../../domain/sheet-cutting/types'
+import { buildColorMapByKey } from '../../shared/pieceColors'
 import { SheetLayoutView } from './SheetLayoutView'
 
 interface SheetCuttingResultProps {
@@ -8,15 +11,47 @@ interface SheetCuttingResultProps {
   result: SheetCuttingResultData
 }
 
-const ORIENTATION_LABEL: Record<SheetCuttingResultData['orientation'], string> = {
-  normal: 'normal',
-  rotated: 'girada 90°',
+interface LayoutGroup {
+  startSheet: number
+  endSheet: number
+  layout: SheetLayoutResult
+}
+
+const INITIAL_VISIBLE_GROUPS = 10
+const MAX_TOTAL_ANIMATION_DELAY_SECONDS = 0.5
+
+function layoutSignature(layout: SheetLayoutResult): string {
+  return layout.placements
+    .map((p) => `${p.itemId}:${p.xMm}:${p.yMm}:${p.placedWidthMm}:${p.placedLengthMm}`)
+    .join('|')
+}
+
+/** Groups consecutive sheets that pack out identically, so a plan with one uniform measure shows a single representative drawing instead of one per sheet. */
+function groupIdenticalLayouts(layouts: readonly SheetLayoutResult[]): LayoutGroup[] {
+  const groups: LayoutGroup[] = []
+  for (const layout of layouts) {
+    const signature = layoutSignature(layout)
+    const last = groups[groups.length - 1]
+    if (last && layoutSignature(last.layout) === signature) {
+      last.endSheet = layout.sheetNumber
+    } else {
+      groups.push({ startSheet: layout.sheetNumber, endSheet: layout.sheetNumber, layout })
+    }
+  }
+  return groups
 }
 
 export function SheetCuttingResult({ materialName, result }: SheetCuttingResultProps) {
-  const fullSheetsCount = result.layouts.filter((layout) => layout.isFull).length
-  const partialSheet = result.layouts.find((layout) => !layout.isFull) ?? null
-  const representativeFullLayout = result.layouts.find((layout) => layout.isFull) ?? null
+  const [visibleGroupCount, setVisibleGroupCount] = useState(INITIAL_VISIBLE_GROUPS)
+
+  const colorMap = useMemo(
+    () => buildColorMapByKey(result.items, (item) => item.itemId),
+    [result.items],
+  )
+  const groups = useMemo(() => groupIdenticalLayouts(result.layouts), [result.layouts])
+  const visibleGroups = groups.slice(0, visibleGroupCount)
+  const remainingGroups = groups.length - visibleGroups.length
+  const delayStep = groups.length > 0 ? Math.min(0.04, MAX_TOTAL_ANIMATION_DELAY_SECONDS / groups.length) : 0
 
   return (
     <div className="plan-result">
@@ -28,33 +63,33 @@ export function SheetCuttingResult({ materialName, result }: SheetCuttingResultP
           <span className="result-summary__label">Chapas inteiras necessárias</span>
         </div>
         <div className="result-summary__stat">
-          <span className="result-summary__value">{result.piecesPerFullSheet}</span>
-          <span className="result-summary__label">Peças por chapa completa</span>
+          <span className="result-summary__value">{formatMm(result.sheetWidthMm)} × {formatMm(result.sheetLengthMm)}</span>
+          <span className="result-summary__label">Tamanho da chapa</span>
         </div>
         <div className="result-summary__stat">
-          <span className="result-summary__value">{result.requestedQuantity}</span>
+          <span className="result-summary__value">{result.totalRequestedPieces}</span>
           <span className="result-summary__label">Peças solicitadas</span>
         </div>
       </div>
 
-      <div className="sheet-result-meta">
-        <p>
-          Tamanho da chapa: <strong>{formatMm(result.sheetWidthMm)} × {formatMm(result.sheetLengthMm)}</strong>
-        </p>
-        <p>
-          Tamanho de cada peça: <strong>{formatMm(result.originalPieceWidthMm)} × {formatMm(result.originalPieceLengthMm)}</strong>
-        </p>
-        <p>
-          Distribuição: <strong>{result.columns} colunas × {result.rows} linhas</strong>
-        </p>
-        <p>
-          Orientação: <strong>{ORIENTATION_LABEL[result.orientation]}</strong>
-        </p>
-        {partialSheet && (
-          <p>
-            Última chapa: <strong>{partialSheet.placedPieceCount} peças</strong>
-          </p>
-        )}
+      <div className="plan-section">
+        <p className="plan-section__title">Medidas do plano</p>
+        <div className="sheet-item-summary">
+          <div className="sheet-item-summary__header">
+            <span aria-hidden="true"></span>
+            <span>Medida</span>
+            <span>Solicitadas</span>
+            <span>Distribuídas</span>
+          </div>
+          {result.items.map((item) => (
+            <div className="sheet-item-summary__row" key={item.itemId}>
+              <span className="sheet-item-summary__swatch" style={{ backgroundColor: colorMap.get(item.itemId) }} />
+              <span>{item.widthMm} × {item.lengthMm} mm</span>
+              <span>{item.requestedQuantity}</span>
+              <span>{item.placedQuantity}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="plan-section">
@@ -63,10 +98,6 @@ export function SheetCuttingResult({ materialName, result }: SheetCuttingResultP
           <div className="area-grid__item">
             <span className="area-grid__label">Área de cada chapa</span>
             <span className="area-grid__value">{formatAreaM2(result.sheetAreaM2)}</span>
-          </div>
-          <div className="area-grid__item">
-            <span className="area-grid__label">Área de cada peça</span>
-            <span className="area-grid__value">{formatAreaM2(result.pieceAreaM2)}</span>
           </div>
           <div className="area-grid__item">
             <span className="area-grid__label">Área total das peças</span>
@@ -84,53 +115,36 @@ export function SheetCuttingResult({ materialName, result }: SheetCuttingResultP
       </div>
 
       <div className="plan-result__bars">
-        {representativeFullLayout && (
-          <div className="sheet-layout-card">
+        {visibleGroups.map((group, index) => (
+          <div className="sheet-layout-card" key={group.startSheet}>
             <div className="sheet-layout-card__header">
               <span className="sheet-layout-card__title">
-                {fullSheetsCount > 1 ? `CHAPAS 1 A ${fullSheetsCount}` : 'CHAPA 01'}
+                {group.startSheet === group.endSheet
+                  ? `CHAPA ${String(group.startSheet).padStart(2, '0')}`
+                  : `CHAPAS ${group.startSheet} A ${group.endSheet}`}
               </span>
-              <span className="sheet-layout-card__count">{result.piecesPerFullSheet} peças por chapa</span>
+              <span className="sheet-layout-card__count">{group.layout.placements.length} peças</span>
             </div>
-            {fullSheetsCount > 1 && (
-              <p className="sheet-layout-card__note">
-                Todas as chapas completas seguem exatamente esta mesma distribuição.
-              </p>
+            {group.startSheet !== group.endSheet && (
+              <p className="sheet-layout-card__note">Todas essas chapas seguem exatamente esta mesma distribuição.</p>
             )}
             <SheetLayoutView
               sheetWidthMm={result.sheetWidthMm}
               sheetLengthMm={result.sheetLengthMm}
-              placedPieceWidthMm={result.placedPieceWidthMm}
-              placedPieceLengthMm={result.placedPieceLengthMm}
-              kerfMm={result.kerfMm}
-              columns={result.columns}
-              rows={result.rows}
-              placements={representativeFullLayout.placements}
-              ariaLabel={`Desenho das chapas completas: ${result.columns} colunas por ${result.rows} linhas`}
+              placements={group.layout.placements}
+              colorMap={colorMap}
+              ariaLabel={`Desenho da chapa ${group.startSheet}`}
+              delaySeconds={index * delayStep}
             />
           </div>
-        )}
-
-        {partialSheet && (
-          <div className="sheet-layout-card">
-            <div className="sheet-layout-card__header">
-              <span className="sheet-layout-card__title">CHAPA {String(partialSheet.sheetNumber).padStart(2, '0')} — PARCIAL</span>
-              <span className="sheet-layout-card__count">{partialSheet.placedPieceCount} peças</span>
-            </div>
-            <SheetLayoutView
-              sheetWidthMm={result.sheetWidthMm}
-              sheetLengthMm={result.sheetLengthMm}
-              placedPieceWidthMm={result.placedPieceWidthMm}
-              placedPieceLengthMm={result.placedPieceLengthMm}
-              kerfMm={result.kerfMm}
-              columns={result.columns}
-              rows={result.rows}
-              placements={partialSheet.placements}
-              ariaLabel={`Desenho da última chapa, parcial, com ${partialSheet.placedPieceCount} peças`}
-            />
-          </div>
-        )}
+        ))}
       </div>
+
+      {remainingGroups > 0 && (
+        <Button variant="secondary" onClick={() => setVisibleGroupCount((count) => count + INITIAL_VISIBLE_GROUPS)}>
+          Mostrar mais chapas ({remainingGroups} restantes)
+        </Button>
+      )}
     </div>
   )
 }

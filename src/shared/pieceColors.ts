@@ -29,3 +29,15 @@ export function buildPieceColorMap(bars: readonly BarLike[]): Map<number, string
   }
   return map
 }
+
+/** Same idea as buildPieceColorMap but keyed by an arbitrary string, for measures identified by more than one dimension (e.g. width×length sheet items). */
+export function buildColorMapByKey<T>(items: readonly T[], getKey: (item: T) => string): Map<string, string> {
+  const map = new Map<string, string>()
+  for (const item of items) {
+    const key = getKey(item)
+    if (!map.has(key)) {
+      map.set(key, PIECE_COLORS[map.size % PIECE_COLORS.length] as string)
+    }
+  }
+  return map
+}

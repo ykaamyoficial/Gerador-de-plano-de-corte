@@ -1,20 +1,20 @@
-import { ChevronDown, LayoutGrid } from 'lucide-react'
+import { Calculator, ChevronDown } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { forwardRef, useState } from 'react'
 import { Alert } from '../../components/ui/Alert'
 import { Button } from '../../components/ui/Button'
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { Menu } from '../../components/ui/Menu'
 import { NumberField } from '../../components/ui/NumberField'
 import { StatusChip } from '../../components/ui/StatusChip'
 import { Switch } from '../../components/ui/Switch'
-import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
-import type { SheetCuttingPlan } from '../../domain/sheet-cutting/types'
+import type { SheetCuttingItem, SheetCuttingPlan } from '../../domain/sheet-cutting/types'
 import { validateSheetPlan } from '../../domain/sheet-cutting/validation'
 import { DURATION_NORMAL, EASE_EMPHASIZED } from '../../shared/motion'
-import { PieceDimensionsFields } from './PieceDimensionsFields'
 import { SheetCuttingResult } from './SheetCuttingResult'
 import { SheetDimensionsFields } from './SheetDimensionsFields'
+import { SheetItemsTable } from './SheetItemsTable'
 
 interface SheetCuttingPlanCardProps {
   plan: SheetCuttingPlan
@@ -24,11 +24,11 @@ interface SheetCuttingPlanCardProps {
   onUpdateMaterial: (value: string) => void
   onUpdateSheetWidth: (value: number | null) => void
   onUpdateSheetLength: (value: number | null) => void
-  onUpdatePieceWidth: (value: number | null) => void
-  onUpdatePieceLength: (value: number | null) => void
-  onUpdateQuantity: (value: number | null) => void
   onUpdateKerf: (value: number | null) => void
   onUpdateAllowRotation: (value: boolean) => void
+  onAddItem: () => string
+  onUpdateItem: (itemId: string, partial: Partial<Omit<SheetCuttingItem, 'id'>>) => void
+  onRemoveItem: (itemId: string) => void
   onCalculate: () => void
   onRemovePlan: () => void
 }
@@ -38,10 +38,8 @@ function planHasData(plan: SheetCuttingPlan): boolean {
     plan.materialName.trim() !== '' ||
     plan.sheetWidthMm !== null ||
     plan.sheetLengthMm !== null ||
-    plan.pieceWidthMm !== null ||
-    plan.pieceLengthMm !== null ||
-    plan.quantity !== null ||
-    plan.kerfMm !== null
+    plan.kerfMm !== null ||
+    plan.items.some((item) => item.widthMm !== null || item.lengthMm !== null || item.quantity !== null)
   )
 }
 
@@ -54,11 +52,11 @@ export const SheetCuttingPlanCard = forwardRef<HTMLElement, SheetCuttingPlanCard
     onUpdateMaterial,
     onUpdateSheetWidth,
     onUpdateSheetLength,
-    onUpdatePieceWidth,
-    onUpdatePieceLength,
-    onUpdateQuantity,
     onUpdateKerf,
     onUpdateAllowRotation,
+    onAddItem,
+    onUpdateItem,
+    onRemoveItem,
     onCalculate,
     onRemovePlan,
   },
@@ -68,6 +66,11 @@ export const SheetCuttingPlanCard = forwardRef<HTMLElement, SheetCuttingPlanCard
   const calculateLabel = plan.calculationStatus === 'not_calculated' ? 'Calcular plano de chapa' : 'Recalcular plano de chapa'
   const [isCalculating, setIsCalculating] = useState(false)
   const [confirmRemoveOpen, setConfirmRemoveOpen] = useState(false)
+  const [autoFocusItemId, setAutoFocusItemId] = useState<string | null>(null)
+
+  const measureCount = plan.items.filter(
+    (item) => item.widthMm !== null || item.lengthMm !== null || item.quantity !== null,
+  ).length
 
   function handleCalculateClick() {
     setIsCalculating(true)
@@ -87,6 +90,11 @@ export const SheetCuttingPlanCard = forwardRef<HTMLElement, SheetCuttingPlanCard
     onRemovePlan()
   }
 
+  function handleAddItem() {
+    const newItemId = onAddItem()
+    setAutoFocusItemId(newItemId)
+  }
+
   return (
     <section className="card plan-card" ref={ref}>
       <header className="plan-card__header">
@@ -96,9 +104,9 @@ export const SheetCuttingPlanCard = forwardRef<HTMLElement, SheetCuttingPlanCard
             <span className="plan-card__title">{plan.materialName || 'Novo plano de chapa'}</span>
           </div>
           <span className="plan-card__subtitle">
-            {plan.sheetWidthMm && plan.sheetLengthMm
-              ? `Chapa ${plan.sheetWidthMm} × ${plan.sheetLengthMm} mm`
-              : 'Chapa ainda não definida'}
+            {measureCount > 0
+              ? `${measureCount} ${measureCount === 1 ? 'medida adicionada' : 'medidas adicionadas'}`
+              : 'Nenhuma medida adicionada'}
           </span>
         </button>
 
@@ -157,46 +165,34 @@ export const SheetCuttingPlanCard = forwardRef<HTMLElement, SheetCuttingPlanCard
                   widthError={validation.sheetWidthError}
                   lengthError={validation.sheetLengthError}
                 />
-              </div>
-
-              <div className="plan-section">
-                <p className="plan-section__title">Tamanho da peça</p>
-                <PieceDimensionsFields
-                  widthMm={plan.pieceWidthMm}
-                  lengthMm={plan.pieceLengthMm}
-                  onWidthChange={onUpdatePieceWidth}
-                  onLengthChange={onUpdatePieceLength}
-                  widthError={validation.pieceWidthError}
-                  lengthError={validation.pieceLengthError}
+                <NumberField
+                  label="Espessura do corte"
+                  unit="mm"
+                  min={0}
+                  value={plan.kerfMm}
+                  onChange={onUpdateKerf}
+                  error={validation.kerfError}
                 />
-                {validation.fitError && <Alert tone="warning">{validation.fitError}</Alert>}
-              </div>
-
-              <div className="plan-section">
-                <p className="plan-section__title">Quantidade e corte</p>
-                <div className="dimension-pair">
-                  <NumberField
-                    label="Quantidade"
-                    min={1}
-                    value={plan.quantity}
-                    onChange={onUpdateQuantity}
-                    error={validation.quantityError}
-                  />
-                  <NumberField
-                    label="Espessura do corte"
-                    unit="mm"
-                    min={0}
-                    value={plan.kerfMm}
-                    onChange={onUpdateKerf}
-                    error={validation.kerfError}
-                  />
-                </div>
                 <Switch
                   id={`allow-rotation-${plan.id}`}
                   checked={plan.allowRotation}
                   onChange={onUpdateAllowRotation}
-                  label="Permitir girar a peça em 90°"
+                  label="Permitir girar as peças em 90°"
                 />
+              </div>
+
+              <div className="plan-section">
+                <p className="plan-section__title">Medidas das peças</p>
+                <SheetItemsTable
+                  items={plan.items}
+                  itemErrors={validation.itemErrors}
+                  autoFocusItemId={autoFocusItemId}
+                  onAutoFocusHandled={() => setAutoFocusItemId(null)}
+                  onUpdateItem={onUpdateItem}
+                  onRemoveItem={onRemoveItem}
+                  onAddItem={handleAddItem}
+                />
+                {validation.planError && <Alert tone="warning">{validation.planError}</Alert>}
               </div>
 
               <div className="plan-card__actions">
@@ -227,9 +223,9 @@ export const SheetCuttingPlanCard = forwardRef<HTMLElement, SheetCuttingPlanCard
 
               {plan.calculationStatus === 'not_calculated' && (
                 <EmptyState
-                  icon={<LayoutGrid size={20} />}
+                  icon={<Calculator size={20} />}
                   title="O plano ainda não foi calculado."
-                  description='Informe as dimensões e clique em "Calcular plano de chapa".'
+                  description='Informe as medidas e clique em "Calcular plano de chapa".'
                 />
               )}
             </div>

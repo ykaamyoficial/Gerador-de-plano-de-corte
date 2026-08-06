@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  validateItemFit,
+  validateItemLength,
+  validateItemQuantity,
+  validateItemWidth,
   validateKerf,
-  validatePieceLength,
-  validatePieceWidth,
-  validateQuantity,
   validateSheetLength,
   validateSheetPlan,
   validateSheetWidth,
@@ -22,22 +23,22 @@ describe('validateSheetWidth / validateSheetLength', () => {
   })
 })
 
-describe('validatePieceWidth / validatePieceLength', () => {
+describe('validateItemWidth / validateItemLength', () => {
   it('exige valores informados, inteiros e maiores que zero', () => {
-    expect(validatePieceWidth(null)).toBe('Informe a largura da peça.')
-    expect(validatePieceWidth(300)).toBeNull()
-    expect(validatePieceLength(null)).toBe('Informe o comprimento da peça.')
-    expect(validatePieceLength(300)).toBeNull()
+    expect(validateItemWidth(null)).toBe('Informe a largura da peça.')
+    expect(validateItemWidth(300)).toBeNull()
+    expect(validateItemLength(null)).toBe('Informe o comprimento da peça.')
+    expect(validateItemLength(300)).toBeNull()
   })
 })
 
-describe('validateQuantity', () => {
+describe('validateItemQuantity', () => {
   it('rejeita zero, negativo, decimal e vazio', () => {
-    expect(validateQuantity(0)).not.toBeNull()
-    expect(validateQuantity(-3)).not.toBeNull()
-    expect(validateQuantity(2.5)).not.toBeNull()
-    expect(validateQuantity(null)).not.toBeNull()
-    expect(validateQuantity(40)).toBeNull()
+    expect(validateItemQuantity(0)).not.toBeNull()
+    expect(validateItemQuantity(-3)).not.toBeNull()
+    expect(validateItemQuantity(2.5)).not.toBeNull()
+    expect(validateItemQuantity(null)).not.toBeNull()
+    expect(validateItemQuantity(40)).toBeNull()
   })
 })
 
@@ -49,63 +50,64 @@ describe('validateKerf', () => {
   })
 })
 
-describe('validateSheetPlan', () => {
-  it('teste 7: bloqueia peça que não cabe na chapa em nenhuma orientação', () => {
-    const result = validateSheetPlan({
-      sheetWidthMm: 1200,
-      sheetLengthMm: 3000,
-      pieceWidthMm: 1300,
-      pieceLengthMm: 3100,
-      quantity: 1,
-      kerfMm: 0,
-      allowRotation: true,
-    })
-
-    expect(result.isValid).toBe(false)
-    expect(result.fitError).toContain('não cabe na chapa')
+describe('validateItemFit', () => {
+  it('bloqueia peça que não cabe na chapa em nenhuma orientação', () => {
+    const error = validateItemFit(1300, 3100, 1200, 3000, true)
+    expect(error).toContain('não cabe na chapa')
   })
 
   it('aceita peça que só cabe girada quando allowRotation é verdadeiro', () => {
-    const result = validateSheetPlan({
-      sheetWidthMm: 500,
-      sheetLengthMm: 1000,
-      pieceWidthMm: 700,
-      pieceLengthMm: 400,
-      quantity: 1,
-      kerfMm: 0,
-      allowRotation: true,
-    })
-
-    expect(result.fitError).toBeNull()
-    expect(result.isValid).toBe(true)
+    expect(validateItemFit(700, 400, 500, 1000, true)).toBeNull()
   })
 
   it('bloqueia peça que só cabe girada quando allowRotation é falso', () => {
-    const result = validateSheetPlan({
-      sheetWidthMm: 500,
-      sheetLengthMm: 1000,
-      pieceWidthMm: 700,
-      pieceLengthMm: 400,
-      quantity: 1,
-      kerfMm: 0,
-      allowRotation: false,
-    })
-
-    expect(result.fitError).not.toBeNull()
-    expect(result.isValid).toBe(false)
+    expect(validateItemFit(700, 400, 500, 1000, false)).not.toBeNull()
   })
+})
 
-  it('é válido para o exemplo principal', () => {
+describe('validateSheetPlan', () => {
+  it('é válido para uma lista de medidas que cabem na chapa', () => {
     const result = validateSheetPlan({
       sheetWidthMm: 1200,
       sheetLengthMm: 3000,
-      pieceWidthMm: 300,
-      pieceLengthMm: 300,
-      quantity: 40,
-      kerfMm: 0,
+      kerfMm: 3,
       allowRotation: true,
+      items: [
+        { id: 'a', widthMm: 300, lengthMm: 300, quantity: 20 },
+        { id: 'b', widthMm: 50, lengthMm: 440, quantity: 30 },
+      ],
     })
 
     expect(result.isValid).toBe(true)
+  })
+
+  it('fica inválido quando qualquer medida da lista não cabe', () => {
+    const result = validateSheetPlan({
+      sheetWidthMm: 1200,
+      sheetLengthMm: 3000,
+      kerfMm: 0,
+      allowRotation: false,
+      items: [
+        { id: 'a', widthMm: 300, lengthMm: 300, quantity: 20 },
+        { id: 'b', widthMm: 1300, lengthMm: 3100, quantity: 1 },
+      ],
+    })
+
+    expect(result.isValid).toBe(false)
+    expect(result.itemErrors.get('b')?.fitError).not.toBeNull()
+    expect(result.itemErrors.get('a')?.fitError).toBeNull()
+  })
+
+  it('não permite calcular sem nenhuma medida válida', () => {
+    const result = validateSheetPlan({
+      sheetWidthMm: 1200,
+      sheetLengthMm: 3000,
+      kerfMm: 0,
+      allowRotation: true,
+      items: [],
+    })
+
+    expect(result.isValid).toBe(false)
+    expect(result.planError).not.toBeNull()
   })
 })

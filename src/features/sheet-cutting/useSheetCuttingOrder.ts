@@ -1,8 +1,12 @@
 import { useState } from 'react'
 import { calculateSheetCutPlan } from '../../domain/sheet-cutting/calculateSheetCutPlan'
 import { validateSheetPlan } from '../../domain/sheet-cutting/validation'
-import type { SheetCuttingOrder, SheetCuttingPlan } from '../../domain/sheet-cutting/types'
+import type { SheetCuttingItem, SheetCuttingOrder, SheetCuttingPlan } from '../../domain/sheet-cutting/types'
 import { createId } from '../../shared/utils/id'
+
+function createEmptyItem(): SheetCuttingItem {
+  return { id: createId(), widthMm: null, lengthMm: null, quantity: null }
+}
 
 function createEmptyPlan(): SheetCuttingPlan {
   return {
@@ -10,11 +14,9 @@ function createEmptyPlan(): SheetCuttingPlan {
     materialName: '',
     sheetWidthMm: null,
     sheetLengthMm: null,
-    pieceWidthMm: null,
-    pieceLengthMm: null,
-    quantity: null,
     kerfMm: null,
     allowRotation: true,
+    items: [createEmptyItem()],
     result: null,
     calculationStatus: 'not_calculated',
   }
@@ -57,24 +59,33 @@ export function useSheetCuttingOrder() {
     updatePlan(planId, (plan) => invalidateIfCalculated({ ...plan, sheetLengthMm }))
   }
 
-  function setPieceWidth(planId: string, pieceWidthMm: number | null) {
-    updatePlan(planId, (plan) => invalidateIfCalculated({ ...plan, pieceWidthMm }))
-  }
-
-  function setPieceLength(planId: string, pieceLengthMm: number | null) {
-    updatePlan(planId, (plan) => invalidateIfCalculated({ ...plan, pieceLengthMm }))
-  }
-
-  function setQuantity(planId: string, quantity: number | null) {
-    updatePlan(planId, (plan) => invalidateIfCalculated({ ...plan, quantity }))
-  }
-
   function setKerf(planId: string, kerfMm: number | null) {
     updatePlan(planId, (plan) => invalidateIfCalculated({ ...plan, kerfMm }))
   }
 
   function setAllowRotation(planId: string, allowRotation: boolean) {
     updatePlan(planId, (plan) => invalidateIfCalculated({ ...plan, allowRotation }))
+  }
+
+  function addItem(planId: string): string {
+    const newItem = createEmptyItem()
+    updatePlan(planId, (plan) => invalidateIfCalculated({ ...plan, items: [...plan.items, newItem] }))
+    return newItem.id
+  }
+
+  function updateItem(planId: string, itemId: string, partial: Partial<Omit<SheetCuttingItem, 'id'>>) {
+    updatePlan(planId, (plan) =>
+      invalidateIfCalculated({
+        ...plan,
+        items: plan.items.map((item) => (item.id === itemId ? { ...item, ...partial } : item)),
+      }),
+    )
+  }
+
+  function removeItem(planId: string, itemId: string) {
+    updatePlan(planId, (plan) =>
+      invalidateIfCalculated({ ...plan, items: plan.items.filter((item) => item.id !== itemId) }),
+    )
   }
 
   function addPlan(): string {
@@ -94,15 +105,22 @@ export function useSheetCuttingOrder() {
     const validation = validateSheetPlan(plan)
     if (!validation.isValid) return
 
+    const validItems = plan.items.filter((item) => {
+      const errors = validation.itemErrors.get(item.id)
+      return errors && !errors.widthError && !errors.lengthError && !errors.quantityError && !errors.fitError
+    })
+
     try {
       const output = calculateSheetCutPlan({
         sheetWidthMm: plan.sheetWidthMm as number,
         sheetLengthMm: plan.sheetLengthMm as number,
-        pieceWidthMm: plan.pieceWidthMm as number,
-        pieceLengthMm: plan.pieceLengthMm as number,
-        quantity: plan.quantity as number,
         kerfMm: plan.kerfMm as number,
         allowRotation: plan.allowRotation,
+        items: validItems.map((item) => ({
+          widthMm: item.widthMm as number,
+          lengthMm: item.lengthMm as number,
+          quantity: item.quantity as number,
+        })),
       })
 
       updatePlan(planId, (current) => ({ ...current, result: output, calculationStatus: 'calculated' }))
@@ -117,11 +135,11 @@ export function useSheetCuttingOrder() {
     setMaterialName,
     setSheetWidth,
     setSheetLength,
-    setPieceWidth,
-    setPieceLength,
-    setQuantity,
     setKerf,
     setAllowRotation,
+    addItem,
+    updateItem,
+    removeItem,
     addPlan,
     removePlan,
     calculatePlan,
